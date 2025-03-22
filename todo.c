@@ -92,6 +92,12 @@ void
 add_if_valid(Task task)
 {
         if (task.name && task.due) {
+                LOG("[%s]\n", task.name);
+                LOG("  date: %s\n", overload_date(task.due));
+                if (task.desc)
+                        LOG("  desc: %s\n", task.desc);
+                LOG("\n");
+
                 da_append(&data, task);
         }
 }
@@ -102,6 +108,8 @@ load_from_file(const char *filename)
         FILE *f;
         char buf[128];
         Task task = { 0 };
+
+        LOG("LOAD from file %s\n", filename);
 
         f = fopen(filename, "r");
         if (f == NULL) {
@@ -158,6 +166,8 @@ load_to_file(const char *filename)
 {
         FILE *f;
         f = fopen(filename, "w");
+
+        LOG("LOAD to file %s\n", filename);
 
         if (f == NULL) {
                 fprintf(stderr, "File %s can not be opened to write!\n", filename);
@@ -336,19 +346,15 @@ add_task()
 int
 main(int argc, char *argv[])
 {
-        da_init(&data);
-        srand(time(0));
-
         bool *help = flag_bool("help", false, "Print this help and exit");
         bool *today = flag_bool("today", false, "Show tasks due today");
         bool *week = flag_bool("week", false, "Show tasks due this week (tasks before Sunday)");
         int *in = flag_int("in", -1, "Show tasks due in the next N days");
         bool *overdue = flag_bool("overdue", false, "Show tasks that are past their due date");
-        bool *list = flag_bool("list", false, "Show all tasks");
         int *done = flag_int("done", -1, "Mark task N as completed");
         bool *add = flag_bool("add", false, "Add a new task");
-        char** in_file = flag_str("in_file", IN_FILENAME, "Input file");
-        char** out_file = flag_str("out_file", IN_FILENAME, "Output file");
+        char **in_file = flag_str("in_file", IN_FILENAME, "Input file");
+        char **out_file = flag_str("out_file", IN_FILENAME, "Output file");
 
         if (!flag_parse(argc, argv)) {
                 usage(stderr);
@@ -356,7 +362,9 @@ main(int argc, char *argv[])
                 exit(1);
         }
 
+        da_init(&data);
         load_from_file(*in_file);
+        srand(time(0));
 
         if (*help) {
                 usage(stdout);
@@ -378,7 +386,7 @@ main(int argc, char *argv[])
                 da_destroy(&filter);
         }
 
-        if (*overdue) {
+        else if (*overdue) {
                 time_t t = time(NULL);
                 Task_da filter = tasks_before(*localtime(&t));
 
@@ -393,35 +401,34 @@ main(int argc, char *argv[])
                 da_destroy(&filter);
         }
 
-        if (*in >= 0) {
+        else if (*in >= 0) {
                 time_t time = days(*in);
                 Task_da filter = tasks_before(*localtime(&time));
                 list_tasks(filter, "Tasks for %d days", *in);
                 da_destroy(&filter);
         }
 
-        if (*list || argc == 1) {
-                list_tasks(data, "Tasks");
-        }
 
-        if (*week) {
+        else if (*week) {
                 time_t time = next_sunday();
                 Task_da filter = tasks_before(*localtime(&time));
                 list_tasks(filter, "Tasks for %d days", *in);
                 da_destroy(&filter);
         }
 
-        if (*add) {
-                add_task();
+        else {
                 list_tasks(data, "Tasks");
         }
 
+        if (*add) {
+                add_task();
+        }
+
         if (*done >= 0) {
-                TODO(done);
                 qsort(data.data, data.size, sizeof *data.data, compare_tasks_by_date);
                 da_remove(&data, *done);
-                list_tasks(data, "Tasks");
         }
+
 
         load_to_file(*out_file);
         destroy_all();
