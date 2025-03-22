@@ -12,7 +12,7 @@
  * Standard: C11
  * ------------------------------------------------------*/
 
-/* It has to be defined to use strptime
+/* It has to be defined to use strptime and mktime
  * and greater to 499 to use strdup */
 #define _XOPEN_SOURCE 500
 #include <time.h>
@@ -34,7 +34,7 @@
 #include "da.h"
 
 #define BACKUP_PATH ""
-#define in_filename "todo.txt"
+#define in_filename "todo.out"
 #define out_filename "todo.out"
 
 #define ZERO(obj_ptr) memset((obj_ptr), 0, sizeof(obj_ptr)[0])
@@ -78,8 +78,9 @@ const char *no_tasks_messages[] = {
         "You're ahead of schedule! Keep up the great work."
 };
 
-
+//#define DATETIME_FORMAT "%a, %d/%m/%y %H:%M:%S"
 #define DATETIME_FORMAT "%c"
+
 static char *
 overload_date(time_t time)
 {
@@ -95,7 +96,6 @@ add_if_valid(Task task)
                 da_append(&data, task);
         }
 }
-
 
 int
 load_from_file(const char *filename)
@@ -118,19 +118,22 @@ load_from_file(const char *filename)
                         ZERO(&task);
                         TRUNCAT(buf, ']');
                         task.name = strdup(buf + 1);
-                        LOG("Name parsed: %s\n", buf + 1);
+                        //LOG("Name parsed: %s\n", buf + 1);
                         break;
                         /* DESCRIPTION */
                 case ' ':
                         if (!memcmp(buf + 2, "desc: ", 6)) {
+                                TRUNCAT(buf + 8, '\n');
                                 task.desc = strdup(buf + 8);
-                                LOG("Desc parsed: %s\n", buf + 8);
+                                //LOG("Desc parsed: %s\n", buf + 8);
                         }
                         /* DATE */
                         else if (!memcmp(buf + 2, "date: ", 6)) {
-                                struct tm tp;
-                                *strptime(buf + 8, DATETIME_FORMAT, &tp) = 0;
-                                LOG("Data parsed: %s\n", buf + 8);
+                                struct tm tp = { 0 };
+                                if (!strptime(buf + 8, DATETIME_FORMAT, &tp)) {
+                                        fprintf(stderr, "Can not load %s\n", buf + 8);
+                                }
+                                //LOG("Data parsed: %s\n", buf + 8);
                                 task.due = mktime(&tp);
                         }
                         /* INVALID ARGUMENT */
@@ -140,7 +143,6 @@ load_from_file(const char *filename)
 
                 case '\n':
                         break;
-
                 default:
                         fprintf(stderr, "Unknown token: %s\n", buf);
                         continue;
@@ -165,10 +167,10 @@ load_to_file(const char *filename)
 
         for_da_each(task, data)
         {
-                LOG("[%s]\n", task->name);
-                LOG("  date: %s\n", overload_date(task->due));
-                if (task->desc)
-                        LOG("  desc: %s\n", task->desc);
+                //LOG("[%s]\n", task->name);
+                //LOG("  date: %s\n", overload_date(task->due));
+                //if (task->desc)
+                        //LOG("  desc: %s\n", task->desc);
 
                 fprintf(f, "[%s]\n", task->name);
                 fprintf(f, "  date: %s\n", overload_date(task->due));
@@ -286,8 +288,8 @@ add_task()
         printf("  Desc: ");
         fflush(stdout);
         if (fgets(buf, sizeof buf - 1, stdin)[1]) {
-                LOG("  desc: '%s'\n", buf);
                 TRUNCAT(buf, '\n');
+                //LOG("  desc: '%s'\n", buf);
                 task.desc = strdup(buf);
         }
 
@@ -298,20 +300,19 @@ add_task()
         printf("  | DD/MM/YYYY: Day DD of MM month of year YY\n");
         printf("  Date format: ");
         fflush(stdout);
-        if (fgets(buf, sizeof buf - 1, stdin)[0]) {
-                int n;
-                if (sscanf(buf, "+%d", &n) == 1) {
-                        t = time(NULL) + n * (3600 * 24);
-                        tp = *localtime(&t);
-                } else if (sscanf(buf, "%d/%d/%d", &tp.tm_mday, &tp.tm_mon, &tp.tm_year) == 3) {
-                } else if (sscanf(buf, "%d/%d", &tp.tm_mday, &tp.tm_mon) == 2) {
-                } else if (sscanf(buf, "%d", &tp.tm_mday) == 1) {
-                } else {
-                        fprintf(stderr, "Error: can not parse date: %s\n", buf);
-                        free(task.name);
-                        free(task.desc);
-                        return;
-                }
+        fgets(buf, sizeof buf - 1, stdin);
+        int n;
+        if (sscanf(buf, "+%d", &n) == 1) {
+                t = time(NULL) + n * (3600 * 24);
+                tp = *localtime(&t);
+        } else if (sscanf(buf, "%d/%d/%d", &tp.tm_mday, &tp.tm_mon, &tp.tm_year) == 3) {
+        } else if (sscanf(buf, "%d/%d", &tp.tm_mday, &tp.tm_mon) == 2) {
+        } else if (sscanf(buf, "%d", &tp.tm_mday) == 1) {
+        } else {
+                fprintf(stderr, "Error: can not parse date: %s\n", buf);
+                free(task.name);
+                free(task.desc);
+                return;
         }
 
         /* Time */
@@ -320,22 +321,20 @@ add_task()
         printf("  | Defaults to 23:59:59\n");
         printf("  Time format: ");
         fflush(stdout);
-        if (fgets(buf, sizeof buf - 1, stdin)[0]) {
-                int n;
-                if (sscanf(buf, "+%d", &n) == 1) {
-                        struct tm tp2;
-                        t = time(NULL) + n * (3600 * 24);
-                        tp2 = *localtime(&t);
-                        tp.tm_hour = tp2.tm_hour + n;
-                        tp.tm_min = tp2.tm_min + n;
-                        tp.tm_sec = tp2.tm_sec + n;
-                } else if (sscanf(buf, "%d %d", &tp.tm_hour, &tp.tm_min) == 2) {
-                        tp.tm_sec = 0;
-                } else {
-                        tp.tm_hour = 23;
-                        tp.tm_min = 59;
-                        tp.tm_sec = 59;
-                }
+        fgets(buf, sizeof buf - 1, stdin);
+        if (sscanf(buf, "+%d", &n) == 1) {
+                struct tm tp2;
+                t = time(NULL) + n * (3600 * 24);
+                tp2 = *localtime(&t);
+                tp.tm_hour = tp2.tm_hour + n;
+                tp.tm_min = tp2.tm_min + n;
+                tp.tm_sec = tp2.tm_sec + n;
+        } else if (sscanf(buf, "%d %d", &tp.tm_hour, &tp.tm_min) == 2) {
+                tp.tm_sec = 0;
+        } else {
+                tp.tm_hour = 23;
+                tp.tm_min = 59;
+                tp.tm_sec = 59;
         }
 
         task.due = mktime(&tp);
@@ -348,15 +347,6 @@ main(int argc, char *argv[])
         da_init(&data);
         load_from_file(BACKUP_PATH in_filename);
         srand(time(0));
-
-        // Entry date;
-        // date.name = "Task for 1 day";
-        // date.end = days(1);
-        // da_append(&data, date);
-        //
-        // date.name = "Task for 2 day";
-        // date.end = days(2);
-        // da_append(&data, date);
 
         bool *help = flag_bool("help", false, "Print this help and exit");
         bool *today = flag_bool("today", false, "Show tasks due today");
@@ -411,7 +401,7 @@ main(int argc, char *argv[])
         if (*in >= 0) {
                 time_t time = days(*in);
                 Task_da filter = tasks_before(*localtime(&time));
-                list_tasks(data, "Tasks for %d days", *in);
+                list_tasks(filter, "Tasks for %d days", *in);
                 da_destroy(&filter);
         }
 
@@ -422,7 +412,7 @@ main(int argc, char *argv[])
         if (*week) {
                 time_t time = next_sunday();
                 Task_da filter = tasks_before(*localtime(&time));
-                list_tasks(data, "Tasks for %d days", *in);
+                list_tasks(filter, "Tasks for %d days", *in);
                 da_destroy(&filter);
         }
 
@@ -431,9 +421,9 @@ main(int argc, char *argv[])
                 list_tasks(data, "Tasks");
         }
 
-
         if (*done >= 0) {
                 TODO(done);
+                qsort(data.data, data.size, sizeof *data.data, compare_tasks_by_date);
                 da_remove(&data, *done);
                 list_tasks(data, "Tasks");
         }

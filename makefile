@@ -1,9 +1,9 @@
 OUT = todo
-FLAGS = -Wall -Wextra -std=c11
+FLAGS = -Wall -Wextra -std=c11 -ggdb
 
 todo: flag.h da.h todo.o
-	gcc $(FLAGS) todo.o -ggdb -o $(OUT)
+	gcc $(FLAGS) todo.o -o $(OUT)
 
 todo.o: todo.c
-	gcc -c todo.c
+	gcc -c todo.c $(FLAGS)
 
