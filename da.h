@@ -88,6 +88,18 @@
 /* Get size */
 #define da_getsize(da) ((da).size)
 
+/* Get the index of an element given a pointer to this element */
+#define da_index(da_elem_ptr, da) (int) ((da_elem_ptr) - (da.data))
+
+/* Remove element al index I */
+#define da_remove(da_ptr, i)                                                                                                      \
+        ({                                                                                                                        \
+                if (i >= 0 && i < (da_ptr)->size) {                                                                               \
+                        --(da_ptr)->size;                                                                                         \
+                        memmove((da_ptr)->data + (i), (da_ptr)->data + (i) + 1, ((da_ptr)->size - (i)) * sizeof *(da_ptr)->data); \
+                }                                                                                                                 \
+        })
+
 /* can be used as:
  * for_da_each(i, DA), where
  * - i: varuable where a pointer to an element from DA is going to be stored
