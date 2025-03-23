@@ -45,7 +45,6 @@ void flag_print_options(FILE *stream);
 
 //////////////////////////////
 
-#define FLAG_IMPLEMENTATION
 #ifdef FLAG_IMPLEMENTATION
 
 typedef enum {

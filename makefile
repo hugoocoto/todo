@@ -7,3 +7,5 @@ todo: flag.h da.h todo.o
 todo.o: todo.c
 	gcc -c todo.c $(FLAGS)
 
+install: todo
+	cp todo ~/.local/bin/

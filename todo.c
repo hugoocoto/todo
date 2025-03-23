@@ -33,7 +33,7 @@
 
 #include "da.h"
 
-#define BACKUP_PATH ""
+#define BACKUP_PATH "/home/hugo/"
 #define IN_FILENAME BACKUP_PATH "todo.out"
 #define OUT_FILENAME BACKUP_PATH "todo.out"
 
@@ -94,8 +94,9 @@ add_if_valid(Task task)
         if (task.name && task.due) {
                 LOG("[%s]\n", task.name);
                 LOG("  date: %s\n", overload_date(task.due));
-                if (task.desc)
+                if (task.desc) {
                         LOG("  desc: %s\n", task.desc);
+                }
                 LOG("\n");
 
                 da_append(&data, task);
@@ -113,7 +114,7 @@ load_from_file(const char *filename)
 
         f = fopen(filename, "r");
         if (f == NULL) {
-                fprintf(stderr, "File %s can not be read!\n", filename);
+                fprintf(stderr, "File %s can not be opened! You should create it\n", filename);
                 return 0;
         }
 
@@ -158,7 +159,7 @@ load_from_file(const char *filename)
 
         add_if_valid(task);
         fclose(f);
-        return data.size;
+        return 1;
 }
 
 int
@@ -363,13 +364,24 @@ main(int argc, char *argv[])
         }
 
         da_init(&data);
-        load_from_file(*in_file);
+        if (load_from_file(*in_file) == 0) {
+                destroy_all();
+                exit(0);
+        }
         srand(time(0));
 
         if (*help) {
                 usage(stdout);
                 destroy_all();
                 exit(0);
+        }
+        if (*add) {
+                add_task();
+        }
+
+        if (*done >= 0) {
+                qsort(data.data, data.size, sizeof *data.data, compare_tasks_by_date);
+                da_remove(&data, *done);
         }
 
         if (*today) {
@@ -419,16 +431,6 @@ main(int argc, char *argv[])
         else {
                 list_tasks(data, "Tasks");
         }
-
-        if (*add) {
-                add_task();
-        }
-
-        if (*done >= 0) {
-                qsort(data.data, data.size, sizeof *data.data, compare_tasks_by_date);
-                da_remove(&data, *done);
-        }
-
 
         load_to_file(*out_file);
         destroy_all();
