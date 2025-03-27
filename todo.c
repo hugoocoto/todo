@@ -15,29 +15,37 @@
 /* It has to be defined to use strptime and mktime
  * and greater to 499 to use strdup */
 #define _XOPEN_SOURCE 500
-#include <time.h>
+#define _POSIX_C_SOURCE 200809L
 
+#include <arpa/inet.h>
 #include <fcntl.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 #define FLAG_IMPLEMENTATION
 #include "flag.h"
 
-#define TODO(what)
-
 #include "da.h"
 
+#define TODO(what)
 #define BACKUP_PATH "/home/hugo/"
 #define IN_FILENAME BACKUP_PATH "todo.out"
 #define OUT_FILENAME BACKUP_PATH "todo.out"
+#define PID_FILENAME BACKUP_PATH ".todo-daemon-pid"
 
 #define ZERO(obj_ptr) memset((obj_ptr), 0, sizeof(obj_ptr)[0])
+
+#define STRADD(strbuf, what, ...) sprintf((strbuf) + strlen(strbuf), what, ##__VA_ARGS__)
 
 #define TRUNCAT(str, chr)                         \
         do {                                      \
@@ -89,6 +97,14 @@ overload_date(time_t time)
         return global_datetime_buffer;
 }
 
+int
+compare_tasks_by_date(const void *a, const void *b)
+{
+        Task *ea = (Task *) a;
+        Task *eb = (Task *) b;
+        return (int) (ea->due - eb->due);
+}
+
 void
 add_if_valid(Task task)
 {
@@ -102,6 +118,181 @@ add_if_valid(Task task)
 
                 da_append(&data, task);
         }
+}
+
+void
+list_tasks(int fd, Task_da d, const char *format, ...)
+{
+        va_list arg;
+        va_start(arg, format);
+        qsort(d.data, d.size, sizeof *d.data, compare_tasks_by_date);
+
+        if (*quiet == false) {
+                vdprintf(fd, format, arg);
+                dprintf(fd, ":\n");
+                for_da_each(e, d)
+                {
+                        dprintf(fd, "%d: %s (%s)", da_index(e, d), e->name, overload_date(e->due));
+                        dprintf(fd, e->desc ? ": %s\n" : "\n", e->desc);
+                }
+                if (d.size == 0)
+                        dprintf(fd, "  %s\n", no_tasks_messages[rand() % 10]);
+        }
+
+        else if (d.size > 0) {
+                vdprintf(fd, format, arg);
+                dprintf(fd, ":\n");
+                for_da_each(e, d)
+                {
+                        dprintf(fd, "%d: %s (%s)", da_index(e, d), e->name, overload_date(e->due));
+                        dprintf(fd, e->desc ? ": %s\n" : "\n", e->desc);
+                }
+        }
+}
+
+void
+serve(bool daemon)
+{
+        struct sockaddr_in sock_in;
+        socklen_t addr_len;
+        int sockfd;
+        int clientfd;
+        int port;
+        char client_ip[INET_ADDRSTRLEN];
+        int fd;
+        pid_t pid;
+        port = 5002;
+
+        LOG("Serve at: ");
+        printf("http://127.0.0.1:%d\r\n", port);
+
+        /* As fork is called twice it is not attacked to terminal */
+        if (daemon) {
+                switch (fork()) {
+                case 0:
+                        break;
+                default:
+                        return;
+                }
+                switch (fork()) {
+                case 0:
+                        break;
+                default:
+                        return;
+                }
+
+                fd = open(PID_FILENAME, O_RDONLY | O_CREAT, 0600);
+                assert(fd >= 0);
+                if (read(fd, &pid, sizeof pid) == sizeof pid) {
+                        LOG("Kill pid %d\n", pid);
+                        kill(pid, SIGTERM);
+                }
+                close(fd);
+                fd = open(PID_FILENAME, O_WRONLY | O_TRUNC, 0600);
+                pid = getpid();
+                assert(write(fd, &pid, sizeof pid) == sizeof pid);
+                LOG("write pid %d\n", pid);
+                close(fd);
+        }
+
+        sockfd = socket(AF_INET, SOCK_STREAM, 0);
+        assert(sockfd >= 0);
+
+        struct linger lin;
+        lin.l_onoff = 0;
+        lin.l_linger = 0;
+        assert(setsockopt(sockfd, SOL_SOCKET, SO_LINGER, &lin, sizeof lin) == 0);
+        assert(setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof (int)) == 0);
+
+        sock_in.sin_family = AF_INET;
+        sock_in.sin_addr.s_addr = htonl(INADDR_ANY);
+        sock_in.sin_port = htons(port);
+        if (bind(sockfd, (struct sockaddr *) &sock_in, sizeof(struct sockaddr_in)) < 0) {
+                perror("Bind");
+                exit(1);
+        }
+
+        assert(listen(sockfd, 1) >= 0);
+
+
+        while (1) {
+                addr_len = sizeof(struct sockaddr_in);
+                LOG("Waiting for a new connection...\n");
+
+                assert((clientfd = accept(sockfd, (struct sockaddr *) &sock_in, &addr_len)) >= 0);
+
+                char inbuf[128] = { 0 };
+                int clicked_elem_index;
+                switch (read(clientfd, inbuf, sizeof inbuf - 1)) {
+                case 0:
+                case -1:
+                        fprintf(stderr, "Internal Server Error! Reload the page\n");
+                        continue;
+                default:
+                        if (sscanf(inbuf, "GET /?button=%d HTTP/1.1\r\n", &clicked_elem_index) == 1) {
+                                LOG("Clicked button %d\n", clicked_elem_index);
+                                switch (clicked_elem_index) {
+                                default:
+                                        da_remove(&data, clicked_elem_index);
+                                        break;
+                                case -1:
+                                        return;
+                                }
+                        };
+                }
+
+                inet_ntop(AF_INET, &sock_in.sin_addr, client_ip, addr_len);
+                LOG("New connection: %s/%d\n", client_ip, ntohs(sock_in.sin_port));
+
+                qsort(data.data, data.size, sizeof *data.data, compare_tasks_by_date);
+
+                char buf[1024 * 1024] = { 0 };
+
+                STRADD(buf, "<html>");
+                STRADD(buf, "<body>");
+                STRADD(buf, "<title>");
+                STRADD(buf, "Todo");
+                STRADD(buf, "</title>");
+                STRADD(buf, "<h1>");
+                STRADD(buf, "Tasks");
+                STRADD(buf, "</h1>");
+                STRADD(buf, "<dl>");
+                for_da_each(e, data)
+                {
+                        STRADD(buf, "<dt>");
+                        STRADD(buf, "%s", e->name);
+                        STRADD(buf, "<form action=\"/\" method=\"GET\" style=\"display:inline;\">");
+                        STRADD(buf, "<input type=\"hidden\" name=\"button\" value=\"%d\">", da_index(e, data));
+                        STRADD(buf, "<button type=\"submit\">Done</button>");
+                        STRADD(buf, "</form>");
+                        STRADD(buf, "<dd>");
+                        STRADD(buf, "%s", overload_date(e->due));
+                        STRADD(buf, "</dd>");
+                        if (e->desc) {
+                                STRADD(buf, "<dd>");
+                                STRADD(buf, ": %s\n", e->desc);
+                                STRADD(buf, "</dd>");
+                        }
+                }
+                STRADD(buf, "</dl>");
+                STRADD(buf, "<br>");
+                STRADD(buf, "<form action=\"/\" method=\"GET\" style=\"display:inline;\">");
+                STRADD(buf, "<input type=\"hidden\" name=\"button\" value=\"%d\">", -1);
+                STRADD(buf, "<button type=\"submit\">Save and quit</button>");
+                STRADD(buf, "</form>");
+                STRADD(buf, "</body>");
+                STRADD(buf, "</html>");
+
+                dprintf(clientfd, "HTTP/1.1 200 OK\r\n");
+                dprintf(clientfd, "Content-Type: text/html\r\n");
+                dprintf(clientfd, "Content-Length: %zu\r\n", strlen(buf));
+                dprintf(clientfd, "\r\n");
+
+                send(clientfd, buf, strlen(buf), 0);
+
+                close(clientfd);
+        }
+        close(sockfd);
 }
 
 int
@@ -279,44 +470,6 @@ usage(FILE *stream)
         flag_print_options(stream);
 }
 
-int
-compare_tasks_by_date(const void *a, const void *b)
-{
-        Task *ea = (Task *) a;
-        Task *eb = (Task *) b;
-        return (int) (ea->due - eb->due);
-}
-
-void
-list_tasks(Task_da d, const char *format, ...)
-{
-        va_list arg;
-        va_start(arg, format);
-        qsort(d.data, d.size, sizeof *d.data, compare_tasks_by_date);
-
-        if (*quiet == false) {
-                vprintf(format, arg);
-                printf(":\n");
-                for_da_each(e, d)
-                {
-                        printf("%d: %s (%s)", da_index(e, d), e->name, overload_date(e->due));
-                        printf(e->desc ? ": %s\n" : "\n", e->desc);
-                }
-                if (d.size == 0)
-                        printf("  %s\n", no_tasks_messages[rand() % 10]);
-        }
-
-        else if (d.size > 0) {
-                vprintf(format, arg);
-                printf(":\n");
-                for_da_each(e, d)
-                {
-                        printf("%d: %s (%s)", da_index(e, d), e->name, overload_date(e->due));
-                        printf(e->desc ? ": %s\n" : "\n", e->desc);
-                }
-        }
-}
-
 void
 add_task()
 {
@@ -430,6 +583,9 @@ main(int argc, char *argv[])
         char **in_file = flag_str("in_file", IN_FILENAME, "Input file");
         char **out_file = flag_str("out_file", IN_FILENAME, "Output file");
         quiet = flag_bool("quiet", false, "Show less output as usual");
+        bool *host = flag_bool("serve", false, "Serve it in the browser");
+        bool *daemon = flag_bool("daemon", false, "Use with -serve to run in the background");
+        bool *die = flag_bool("die", false, "Kill running daemon");
 
         if (!flag_parse(argc, argv)) {
                 usage(stderr);
@@ -464,20 +620,20 @@ main(int argc, char *argv[])
         if (*today) {
                 time_t time = days(0);
                 Task_da filter = tasks_before(*localtime(&time));
-                list_tasks(filter, "Tasks for today:\n");
+                list_tasks(STDOUT_FILENO, filter, "Tasks for today");
         }
 
         else if (*overdue) {
                 time_t t = time(NULL);
                 Task_da filter = tasks_before(*localtime(&t));
-                list_tasks(filter, "Overdue tasks:\n");
+                list_tasks(STDOUT_FILENO, filter, "Overdue tasks");
                 da_destroy(&filter);
         }
 
         else if (*in >= 0) {
                 time_t time = days(*in);
                 Task_da filter = tasks_before(*localtime(&time));
-                list_tasks(filter, "Tasks for %d days", *in);
+                list_tasks(STDOUT_FILENO, filter, "Tasks for %d days", *in);
                 da_destroy(&filter);
         }
 
@@ -485,12 +641,27 @@ main(int argc, char *argv[])
         else if (*week) {
                 time_t t = next_sunday(NULL);
                 Task_da filter = tasks_before(*localtime(&t));
-                list_tasks(filter, "Tasks before Sunday");
+                list_tasks(STDOUT_FILENO, filter, "Tasks before Sunday");
                 da_destroy(&filter);
         }
 
+        else if (*host) {
+                serve(*daemon);
+        }
+
+        else if (*die){
+                int fd;
+                pid_t pid;
+                fd = open(PID_FILENAME, O_RDONLY | O_CREAT, 0600);
+                assert(fd >= 0);
+                if (read(fd, &pid, sizeof pid) == sizeof pid) {
+                        LOG("Kill pid %d\n", pid);
+                        kill(pid, SIGTERM);
+                }
+        }
+
         else {
-                list_tasks(data, "Tasks");
+                list_tasks(STDOUT_FILENO, data, "Tasks");
         }
 
         load_to_file(*out_file);
