@@ -25,6 +25,8 @@
 #define AUTO_TYPE __auto_type
 #endif
 
+#define OBSOLETE(format, ...) printf("[OBSOLETE] " format, ##__VA_ARGS__)
+
 #define DA(type)              \
         struct {              \
                 int capacity; \
@@ -37,6 +39,7 @@
  * passed as second argument, default is 4. */
 #define da_init(da_ptr, ...)                                                               \
         ({                                                                                 \
+         OBSOLETE("da_init -> zero initialize it\n");\
                 (da_ptr)->capacity = 256;                                                  \
                 __VA_OPT__((da_ptr)->capacity = (__VA_ARGS__));                            \
                 (da_ptr)->size = 0;                                                        \

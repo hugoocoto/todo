@@ -158,6 +158,7 @@ load_from_file(const char *filename)
         }
 
         add_if_valid(task);
+        ZERO(&task);
         fclose(f);
         return 1;
 }
@@ -208,6 +209,7 @@ next_sunday()
         struct tm *tp;
         t = time(NULL);
         tp = localtime(&t);
+        mktime(tp);
         return days(7 - tp->tm_wday);
 }
 
@@ -216,8 +218,7 @@ Task_da
 tasks_before(struct tm tp)
 {
         time_t time = mktime(&tp);
-        Task_da filtered_data;
-        da_init(&filtered_data);
+        Task_da filtered_data = { 0 };
 
         for_da_each(task, data)
         {
@@ -276,8 +277,10 @@ add_task()
 {
         Task task = { 0 };
         char buf[128];
+        time_t t = time(0);
+        struct tm tp_current = *localtime(&t);
         struct tm tp = { 0 };
-        time_t t;
+        int n;
 
         /* Name */
         printf("Task name: ");
@@ -304,13 +307,16 @@ add_task()
         printf("  Date format: ");
         fflush(stdout);
         fgets(buf, sizeof buf - 1, stdin);
-        int n;
         if (sscanf(buf, "+%d", &n) == 1) {
-                t = time(NULL) + n * (3600 * 24);
+                t += n * (3600 * 24);
                 tp = *localtime(&t);
         } else if (sscanf(buf, "%d/%d/%d", &tp.tm_mday, &tp.tm_mon, &tp.tm_year) == 3) {
         } else if (sscanf(buf, "%d/%d", &tp.tm_mday, &tp.tm_mon) == 2) {
+                tp.tm_year = tp_current.tm_year;
         } else if (sscanf(buf, "%d", &tp.tm_mday) == 1) {
+                tp.tm_year = tp_current.tm_year;
+                tp.tm_mon = tp_current.tm_mon;
+
         } else {
                 fprintf(stderr, "Error: can not parse date: %s\n", buf);
                 free(task.name);
@@ -330,8 +336,8 @@ add_task()
                 t = time(NULL) + n * (3600 * 24);
                 tp2 = *localtime(&t);
                 tp.tm_hour = tp2.tm_hour + n;
-                tp.tm_min = tp2.tm_min + n;
-                tp.tm_sec = tp2.tm_sec + n;
+                tp.tm_min = tp2.tm_min;
+                tp.tm_sec = tp2.tm_sec;
         } else if (sscanf(buf, "%d %d", &tp.tm_hour, &tp.tm_min) == 2) {
                 tp.tm_sec = 0;
         } else {
@@ -341,6 +347,7 @@ add_task()
         }
 
         task.due = mktime(&tp);
+
         da_append(&data, task);
 }
 
@@ -353,6 +360,7 @@ main(int argc, char *argv[])
         int *in = flag_int("in", -1, "Show tasks due in the next N days");
         bool *overdue = flag_bool("overdue", false, "Show tasks that are past their due date");
         int *done = flag_int("done", -1, "Mark task N as completed");
+        bool *clear = flag_bool("clear", false, "Mark all tasks as completed");
         bool *add = flag_bool("add", false, "Add a new task");
         char **in_file = flag_str("in_file", IN_FILENAME, "Input file");
         char **out_file = flag_str("out_file", IN_FILENAME, "Output file");
@@ -363,7 +371,6 @@ main(int argc, char *argv[])
                 exit(1);
         }
 
-        da_init(&data);
         if (load_from_file(*in_file) == 0) {
                 destroy_all();
                 exit(0);
@@ -382,6 +389,10 @@ main(int argc, char *argv[])
         if (*done >= 0) {
                 qsort(data.data, data.size, sizeof *data.data, compare_tasks_by_date);
                 da_remove(&data, *done);
+        }
+
+        if (*clear) {
+                data.size = 0;
         }
 
         if (*today) {
