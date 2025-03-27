@@ -172,13 +172,13 @@ serve(bool daemon)
                 case 0:
                         break;
                 default:
-                        return;
+                        exit(0);
                 }
                 switch (fork()) {
                 case 0:
                         break;
                 default:
-                        return;
+                        exit(0);
                 }
 
                 fd = open(PID_FILENAME, O_RDONLY | O_CREAT, 0600);
@@ -193,7 +193,15 @@ serve(bool daemon)
                 assert(write(fd, &pid, sizeof pid) == sizeof pid);
                 LOG("write pid %d\n", pid);
                 close(fd);
+
+                /* If a pipe or something similar is used it wait until
+                 * the file is closed so despite of this is a daemon the
+                 * fildes should be closed. */
+                close(STDIN_FILENO);
+                close(STDOUT_FILENO);
+                close(STDERR_FILENO);
         }
+
 
         sockfd = socket(AF_INET, SOCK_STREAM, 0);
         assert(sockfd >= 0);
@@ -202,7 +210,7 @@ serve(bool daemon)
         lin.l_onoff = 0;
         lin.l_linger = 0;
         assert(setsockopt(sockfd, SOL_SOCKET, SO_LINGER, &lin, sizeof lin) == 0);
-        assert(setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof (int)) == 0);
+        assert(setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &(int) { 1 }, sizeof(int)) == 0);
 
         sock_in.sin_family = AF_INET;
         sock_in.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -213,7 +221,6 @@ serve(bool daemon)
         }
 
         assert(listen(sockfd, 1) >= 0);
-
 
         while (1) {
                 addr_len = sizeof(struct sockaddr_in);
@@ -649,7 +656,7 @@ main(int argc, char *argv[])
                 serve(*daemon);
         }
 
-        else if (*die){
+        else if (*die) {
                 int fd;
                 pid_t pid;
                 fd = open(PID_FILENAME, O_RDONLY | O_CREAT, 0600);
