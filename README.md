@@ -9,31 +9,5 @@ by time frames like a week.
 todo [OPTIONS]
 
 ## Description
-    -help
-        Print this help and exit
+run todo -help. If you need more documentation, read the source code.
 
-    -today
-        Show tasks due today
-
-    -week
-        Show tasks due this week (tasks before Sunday)
-
-    -in
-        Show tasks due in the next N days
-
-    -overdue
-        Show tasks that are past their due date
-
-    -done
-        Mark task N as completed
-
-    -add
-        Add a new task
-
-    -in_file
-        Input file
-        Default: ~/todo.out
-
-    -out_file
-        Output file
-        Default: ~/todo.out
