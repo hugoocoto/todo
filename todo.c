@@ -49,7 +49,7 @@
 
 #define DEBUG 0
 #if defined(DEBUG) && DEBUG
-#define LOG(format, ...) printf("INFO: " format, ##__VA_ARGS__)
+#define LOG(format, ...) printf("[INFO] " format, ##__VA_ARGS__)
 #else
 #define LOG(...)
 #endif
@@ -63,6 +63,7 @@ typedef struct {
 typedef DA(Task) Task_da;
 
 Task_da data;
+bool *quiet = NULL;
 
 /* Chatgpt prime */
 const char *no_tasks_messages[] = {
@@ -109,6 +110,8 @@ load_from_file(const char *filename)
         FILE *f;
         char buf[128];
         Task task = { 0 };
+        struct tm tp;
+        char *c;
 
         LOG("LOAD from file %s\n", filename);
 
@@ -126,24 +129,43 @@ load_from_file(const char *filename)
                         ZERO(&task);
                         TRUNCAT(buf, ']');
                         task.name = strdup(buf + 1);
-
                         break;
+
                         /* DESCRIPTION */
                 case ' ':
                         if (!memcmp(buf + 2, "desc: ", 6)) {
                                 TRUNCAT(buf + 8, '\n');
                                 task.desc = strdup(buf + 8);
-
                         }
-                        /* DATE */
+
+                        /* DATE TIME */
                         else if (!memcmp(buf + 2, "date: ", 6)) {
-                                struct tm tp = { 0 };
-                                if (!strptime(buf + 8, DATETIME_FORMAT, &tp)) {
+                                TRUNCAT(buf, '\n');
+                                ZERO(&tp);
+                                LOG("Reading format %s\n", buf + 8);
+                                if ((c = strptime(buf + 8, DATETIME_FORMAT, &tp)) && *c) {
                                         fprintf(stderr, "Can not load %s\n", buf + 8);
                                 }
 
+                                tp.tm_isdst = -1; // determine if summer time is in use (+-1h)
                                 task.due = mktime(&tp);
+                                LOG(
+                                "Task: %s\n"
+                                "\ttime = %d:%d:%d\n"
+                                "\tdate = %d/%d/%d\n"
+                                "\twday = %d\n"
+                                "\tyday = %d\n",
+                                task.name,
+                                tp.tm_hour,
+                                tp.tm_min,
+                                tp.tm_sec,
+                                tp.tm_mday,
+                                tp.tm_mon,
+                                tp.tm_year + 1900,
+                                tp.tm_wday,
+                                tp.tm_yday);
                         }
+
                         /* INVALID ARGUMENT */
                         else
                                 fprintf(stderr, "Unknown token: %s\n", buf);
@@ -153,12 +175,11 @@ load_from_file(const char *filename)
                         break;
                 default:
                         fprintf(stderr, "Unknown token: %s\n", buf);
-                        continue;
+                        break;
                 }
         }
 
         add_if_valid(task);
-        ZERO(&task);
         fclose(f);
         return 1;
 }
@@ -183,6 +204,12 @@ load_to_file(const char *filename)
                 if (task->desc)
                         fprintf(f, "  desc: %s\n", task->desc);
                 fprintf(f, "\n");
+                LOG("[%s]\n", task->name);
+                LOG("  date: %s\n", overload_date(task->due));
+                if (task->desc) {
+                        LOG("  desc: %s\n", task->desc);
+                }
+                LOG("\n");
         }
 
         fclose(f);
@@ -199,17 +226,21 @@ days(unsigned int days)
         tp->tm_hour = 23;
         tp->tm_min = 59;
         tp->tm_sec = 59;
+        tp->tm_isdst = -1; // determine if summer time is in use (+-1h)
         return mktime(tp);
 }
 
 time_t
-next_sunday()
+next_sunday(int *d)
 {
         time_t t;
         struct tm *tp;
         t = time(NULL);
         tp = localtime(&t);
+        tp->tm_isdst = -1; // determine if summer time is in use (+-1h)
         mktime(tp);
+        if (d)
+                *d = 7 - tp->tm_wday;
         return days(7 - tp->tm_wday);
 }
 
@@ -217,6 +248,7 @@ next_sunday()
 Task_da
 tasks_before(struct tm tp)
 {
+        tp.tm_isdst = -1; // determine if summer time is in use (+-1h)
         time_t time = mktime(&tp);
         Task_da filtered_data = { 0 };
 
@@ -261,15 +293,28 @@ list_tasks(Task_da d, const char *format, ...)
         va_list arg;
         va_start(arg, format);
         qsort(d.data, d.size, sizeof *d.data, compare_tasks_by_date);
-        vprintf(format, arg);
-        printf(":\n");
-        for_da_each(e, d)
-        {
-                printf("%d: %s (%s)", da_index(e, d), e->name, overload_date(e->due));
-                printf(e->desc ? ": %s\n" : "\n", e->desc);
+
+        if (*quiet == false) {
+                vprintf(format, arg);
+                printf(":\n");
+                for_da_each(e, d)
+                {
+                        printf("%d: %s (%s)", da_index(e, d), e->name, overload_date(e->due));
+                        printf(e->desc ? ": %s\n" : "\n", e->desc);
+                }
+                if (d.size == 0)
+                        printf("  %s\n", no_tasks_messages[rand() % 10]);
         }
-        if (d.size == 0)
-                printf("  %s\n", no_tasks_messages[rand() % 10]);
+
+        else if (d.size > 0) {
+                vprintf(format, arg);
+                printf(":\n");
+                for_da_each(e, d)
+                {
+                        printf("%d: %s (%s)", da_index(e, d), e->name, overload_date(e->due));
+                        printf(e->desc ? ": %s\n" : "\n", e->desc);
+                }
+        }
 }
 
 void
@@ -346,7 +391,27 @@ add_task()
                 tp.tm_sec = 59;
         }
 
+        tp.tm_isdst = -1; // determine if summer time is in use (+-1h)
         task.due = mktime(&tp);
+
+        printf(
+        "Task: %s due\n"
+        "time = %d:%d:%d\n"
+        "date = %d/%d/%d\n"
+        "wday = %d\n"
+        "yday = %d\n"
+        "isdst = %d\n",
+        task.name,
+        tp.tm_hour,
+        tp.tm_min,
+        tp.tm_sec,
+        tp.tm_mday,
+        tp.tm_mon,
+        tp.tm_year + 1900,
+        tp.tm_wday,
+        tp.tm_yday,
+        tp.tm_isdst);
+
 
         da_append(&data, task);
 }
@@ -364,6 +429,7 @@ main(int argc, char *argv[])
         bool *add = flag_bool("add", false, "Add a new task");
         char **in_file = flag_str("in_file", IN_FILENAME, "Input file");
         char **out_file = flag_str("out_file", IN_FILENAME, "Output file");
+        quiet = flag_bool("quiet", false, "Show less output as usual");
 
         if (!flag_parse(argc, argv)) {
                 usage(stderr);
@@ -398,29 +464,13 @@ main(int argc, char *argv[])
         if (*today) {
                 time_t time = days(0);
                 Task_da filter = tasks_before(*localtime(&time));
-                printf("Tasks for today:\n");
-                for_da_each(e, filter)
-                {
-                        printf("  %s (%s)", e->name, overload_date(e->due));
-                        printf(e->desc ? ": %s\n" : "\n", e->desc);
-                }
-                if (filter.size == 0)
-                        printf("  %s\n", no_tasks_messages[rand() % 10]);
-                da_destroy(&filter);
+                list_tasks(filter, "Tasks for today:\n");
         }
 
         else if (*overdue) {
                 time_t t = time(NULL);
                 Task_da filter = tasks_before(*localtime(&t));
-
-                printf("Overdue tasks:\n");
-                for_da_each(e, filter)
-                {
-                        printf("  %s (%s)", e->name, overload_date(e->due));
-                        printf(e->desc ? ": %s\n" : "\n", e->desc);
-                }
-                if (filter.size == 0)
-                        printf("  %s\n", no_tasks_messages[rand() % 10]);
+                list_tasks(filter, "Overdue tasks:\n");
                 da_destroy(&filter);
         }
 
@@ -433,9 +483,9 @@ main(int argc, char *argv[])
 
 
         else if (*week) {
-                time_t time = next_sunday();
-                Task_da filter = tasks_before(*localtime(&time));
-                list_tasks(filter, "Tasks for %d days", *in);
+                time_t t = next_sunday(NULL);
+                Task_da filter = tasks_before(*localtime(&t));
+                list_tasks(filter, "Tasks before Sunday");
                 da_destroy(&filter);
         }
 
