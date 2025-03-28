@@ -554,13 +554,13 @@ add_task()
         tp.tm_isdst = -1; // determine if summer time is in use (+-1h)
         task.due = mktime(&tp);
 
-        printf(
-        "Task: %s due\n"
-        "time = %d:%d:%d\n"
-        "date = %d/%d/%d\n"
-        "wday = %d\n"
-        "yday = %d\n"
-        "isdst = %d\n",
+        LOG(
+        "Task: %s\n"
+        "  time = %d:%d:%d\n"
+        "  date = %d/%d/%d\n"
+        "  wday = %d\n"
+        "  yday = %d\n"
+        "  isdst = %d\n",
         task.name,
         tp.tm_hour,
         tp.tm_min,
