@@ -18,6 +18,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <arpa/inet.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -37,16 +38,20 @@
 
 #include "da.h"
 
-#define TODO(what)
 #define BACKUP_PATH "/home/hugo/"
+#define TMP_FOLDER "/tmp/"
+#define HIDEN "."
+
 #define IN_FILENAME BACKUP_PATH "todo.out"
 #define OUT_FILENAME BACKUP_PATH "todo.out"
-#define PID_FILENAME BACKUP_PATH ".todo-daemon-pid"
+#define PID_FILENAME TMP_FOLDER ".todo-daemon-pid"
+#define LOG_FILENAME BACKUP_PATH HIDEN "log.txt"
 
+#define MAX_CLIENTS 16
+
+#define TODO(what)
 #define ZERO(obj_ptr) memset((obj_ptr), 0, sizeof(obj_ptr)[0])
-
 #define STRADD(strbuf, what, ...) sprintf((strbuf) + strlen(strbuf), what, ##__VA_ARGS__)
-
 #define TRUNCAT(str, chr)                         \
         do {                                      \
                 char *_c_;                        \
@@ -54,12 +59,11 @@
                         *_c_ = 0;                 \
         } while (0)
 
-
-#define DEBUG 0
-#if defined(DEBUG) && DEBUG
-#define LOG(format, ...) printf("[INFO] " format, ##__VA_ARGS__)
+#define ENABLE_DEBUG 0
+#if defined(ENABLE_DEBUG) && ENABLE_DEBUG
+#define DEBUG(format, ...) printf("[INFO] " format, ##__VA_ARGS__)
 #else
-#define LOG(...)
+#define DEBUG(...)
 #endif
 
 typedef struct {
@@ -109,12 +113,12 @@ void
 add_if_valid(Task task)
 {
         if (task.name && task.due) {
-                LOG("[%s]\n", task.name);
-                LOG("  date: %s\n", overload_date(task.due));
+                DEBUG("[%s]\n", task.name);
+                DEBUG("  date: %s\n", overload_date(task.due));
                 if (task.desc) {
-                        LOG("  desc: %s\n", task.desc);
+                        DEBUG("  desc: %s\n", task.desc);
                 }
-                LOG("\n");
+                DEBUG("\n");
 
                 da_append(&data, task);
         }
@@ -151,7 +155,7 @@ list_tasks(int fd, Task_da d, const char *format, ...)
 }
 
 void
-serve(bool daemon)
+serve()
 {
         struct sockaddr_in sock_in;
         socklen_t addr_len;
@@ -163,141 +167,169 @@ serve(bool daemon)
         pid_t pid;
         port = 5002;
 
-        LOG("Serve at: ");
-        printf("http://127.0.0.1:%d\r\n", port);
+        DEBUG("Serve at: ");
+        printf("http://127.0.0.1:%d\n", port);
+
+        /* Todo:
+         * When launched as `firefox $(todo -serve)` it opens two clients.
+         * I dont know why. It is not a critical problem but is quite anoying.
+         */
 
         /* As fork is called twice it is not attacked to terminal */
-        if (daemon) {
-                switch (fork()) {
-                case 0:
-                        break;
-                default:
-                        exit(0);
-                }
-                switch (fork()) {
-                case 0:
-                        break;
-                default:
-                        exit(0);
-                }
-
-                fd = open(PID_FILENAME, O_RDONLY | O_CREAT, 0600);
-                assert(fd >= 0);
-                if (read(fd, &pid, sizeof pid) == sizeof pid) {
-                        LOG("Kill pid %d\n", pid);
-                        kill(pid, SIGTERM);
-                }
-                close(fd);
-                fd = open(PID_FILENAME, O_WRONLY | O_TRUNC, 0600);
-                pid = getpid();
-                assert(write(fd, &pid, sizeof pid) == sizeof pid);
-                LOG("write pid %d\n", pid);
-                close(fd);
-
-                /* If a pipe or something similar is used it wait until
-                 * the file is closed so despite of this is a daemon the
-                 * fildes should be closed. */
-                close(STDIN_FILENO);
-                close(STDOUT_FILENO);
-                close(STDERR_FILENO);
+        if (fork() != 0) {
+                exit(0);
         }
+
+        if (fork() != 0) {
+                exit(0);
+        }
+
+
+        /* Redirect output to log file */
+        fd = open(LOG_FILENAME, O_RDWR | O_APPEND | O_CREAT, 0600);
+        assert(fd >= 0);
+        assert(dup2(fd, STDERR_FILENO) >= 0);
+        assert(dup2(fd, STDOUT_FILENO) >= 0);
+        /* Close stdin to tell processes that this one is not
+         * going to produce more output (otherwise $() will never exit)*/
+        close(STDIN_FILENO);
+
+        /* TODO:
+         * The read pid sometimes is diferent from the last pid wrote.
+         * I think that it can be reading a value before the file is
+         * updated or something like that.
+         * This can also be cause by a race condition but it would be
+         * strange as I dont start multiple servers at the same time.
+         * Also the error might be in the printf, so it would look like
+         * an error but it isnt. What is sure is that some daemons where
+         * never killed.
+         *
+         * To test it, run a daemon and see (with ps or similar) that
+         * there is the only one instance of todo running. After calling
+         * todo -serve more times, the previous instances should be killed.
+         * If there is more than one instance alive, something where wrong.
+         * Also it prints some info to LOG_FILENAME.
+         */
+        fd = open(PID_FILENAME, O_RDONLY | O_CREAT, 0600);
+        assert(fd >= 0);
+        if (read(fd, &pid, sizeof pid) == sizeof pid) {
+                printf("Kill pid %d\n", pid);
+                kill(pid, SIGTERM);
+        }
+        else {
+                printf("read (kill) failed: pid %d\n", pid);
+        }
+        close(fd);
+
+        fd = open(PID_FILENAME, O_WRONLY | O_TRUNC | O_CREAT, 0600);
+        assert(fd >= 0);
+        pid = getpid();
+        assert(write(fd, &pid, sizeof pid) == sizeof pid);
+        printf("write pid %d\n", pid);
+        close(fd);
 
 
         sockfd = socket(AF_INET, SOCK_STREAM, 0);
         assert(sockfd >= 0);
 
-        struct linger lin;
-        lin.l_onoff = 0;
-        lin.l_linger = 0;
-        assert(setsockopt(sockfd, SOL_SOCKET, SO_LINGER, &lin, sizeof lin) == 0);
-        assert(setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &(int) { 1 }, sizeof(int)) == 0);
-
         sock_in.sin_family = AF_INET;
         sock_in.sin_addr.s_addr = htonl(INADDR_ANY);
         sock_in.sin_port = htons(port);
+        errno = 0;
         if (bind(sockfd, (struct sockaddr *) &sock_in, sizeof(struct sockaddr_in)) < 0) {
+                if (errno == EADDRINUSE) {
+                        ++port;
+                        fprintf(stderr, "Port %d already in use! Using %d\n", port - 1, port);
+                        serve();
+                }
                 perror("Bind");
                 exit(1);
         }
 
-        assert(listen(sockfd, 1) >= 0);
+        assert(listen(sockfd, MAX_CLIENTS) >= 0);
 
         while (1) {
-                addr_len = sizeof(struct sockaddr_in);
-                LOG("Waiting for a new connection...\n");
-
-                assert((clientfd = accept(sockfd, (struct sockaddr *) &sock_in, &addr_len)) >= 0);
-
                 char inbuf[128] = { 0 };
-                int clicked_elem_index;
-                switch (read(clientfd, inbuf, sizeof inbuf - 1)) {
-                case 0:
-                case -1:
-                        fprintf(stderr, "Internal Server Error! Reload the page\n");
-                        continue;
-                default:
-                        if (sscanf(inbuf, "GET /?button=%d HTTP/1.1\r\n", &clicked_elem_index) == 1) {
-                                LOG("Clicked button %d\n", clicked_elem_index);
-                                switch (clicked_elem_index) {
-                                default:
-                                        da_remove(&data, clicked_elem_index);
-                                        break;
-                                case -1:
-                                        return;
-                                }
-                        };
-                }
-
-                inet_ntop(AF_INET, &sock_in.sin_addr, client_ip, addr_len);
-                LOG("New connection: %s/%d\n", client_ip, ntohs(sock_in.sin_port));
-
-                qsort(data.data, data.size, sizeof *data.data, compare_tasks_by_date);
-
                 char buf[1024 * 1024] = { 0 };
+                int clicked_elem_index;
+                addr_len = sizeof(struct sockaddr_in);
+                DEBUG("Waiting for a new connection...\n");
 
-                STRADD(buf, "<html>");
-                STRADD(buf, "<body>");
-                STRADD(buf, "<title>");
-                STRADD(buf, "Todo");
-                STRADD(buf, "</title>");
-                STRADD(buf, "<h1>");
-                STRADD(buf, "Tasks");
-                STRADD(buf, "</h1>");
-                STRADD(buf, "<dl>");
-                for_da_each(e, data)
-                {
-                        STRADD(buf, "<dt>");
-                        STRADD(buf, "%s", e->name);
-                        STRADD(buf, "<form action=\"/\" method=\"GET\" style=\"display:inline;\">");
-                        STRADD(buf, "<input type=\"hidden\" name=\"button\" value=\"%d\">", da_index(e, data));
-                        STRADD(buf, "<button type=\"submit\">Done</button>");
-                        STRADD(buf, "</form>");
-                        STRADD(buf, "<dd>");
-                        STRADD(buf, "%s", overload_date(e->due));
-                        STRADD(buf, "</dd>");
-                        if (e->desc) {
-                                STRADD(buf, "<dd>");
-                                STRADD(buf, ": %s\n", e->desc);
-                                STRADD(buf, "</dd>");
-                        }
+                if (((clientfd = accept(sockfd, (struct sockaddr *) &sock_in, &addr_len)) < 0)) {
+                        perror("Accept");
+                        exit(-1);
                 }
-                STRADD(buf, "</dl>");
-                STRADD(buf, "<br>");
-                STRADD(buf, "<form action=\"/\" method=\"GET\" style=\"display:inline;\">");
-                STRADD(buf, "<input type=\"hidden\" name=\"button\" value=\"%d\">", -1);
-                STRADD(buf, "<button type=\"submit\">Save and quit</button>");
-                STRADD(buf, "</form>");
-                STRADD(buf, "</body>");
-                STRADD(buf, "</html>");
 
-                dprintf(clientfd, "HTTP/1.1 200 OK\r\n");
-                dprintf(clientfd, "Content-Type: text/html\r\n");
-                dprintf(clientfd, "Content-Length: %zu\r\n", strlen(buf));
-                dprintf(clientfd, "\r\n");
+                switch (fork()) {
+                case 0:
+                        switch (read(clientfd, inbuf, sizeof inbuf - 1)) {
+                        case 0:
+                        case -1:
+                                fprintf(stderr, "Internal Server Error! Reload the page\n");
+                                continue;
+                        default:
+                                if (sscanf(inbuf, "GET /?button=%d HTTP/1.1\r\n", &clicked_elem_index) == 1) {
+                                        DEBUG("Clicked button %d\n", clicked_elem_index);
+                                        switch (clicked_elem_index) {
+                                        default:
+                                                da_remove(&data, clicked_elem_index);
+                                                break;
+                                        case -1:
+                                                return;
+                                        }
+                                }
+                        }
 
-                send(clientfd, buf, strlen(buf), 0);
+                        inet_ntop(AF_INET, &sock_in.sin_addr, client_ip, addr_len);
+                        DEBUG("New connection: %s/%d\n", client_ip, ntohs(sock_in.sin_port));
 
-                close(clientfd);
+                        qsort(data.data, data.size, sizeof *data.data, compare_tasks_by_date);
+
+                        STRADD(buf, "<html>");
+                        STRADD(buf, "<body>");
+                        STRADD(buf, "<title>");
+                        STRADD(buf, "Todo");
+                        STRADD(buf, "</title>");
+                        STRADD(buf, "<h1>");
+                        STRADD(buf, "Tasks");
+                        STRADD(buf, "</h1>");
+                        STRADD(buf, "<dl>");
+                        for_da_each(e, data)
+                        {
+                                STRADD(buf, "<dt>");
+                                STRADD(buf, "%s", e->name);
+                                STRADD(buf, "<form action=\"/\" method=\"GET\" style=\"display:inline;\">");
+                                STRADD(buf, "<input type=\"hidden\" name=\"button\" value=\"%d\">", da_index(e, data));
+                                STRADD(buf, "<button type=\"submit\">Done</button>");
+                                STRADD(buf, "</form>");
+                                STRADD(buf, "<dd>");
+                                STRADD(buf, "%s", overload_date(e->due));
+                                STRADD(buf, "</dd>");
+                                if (e->desc) {
+                                        STRADD(buf, "<dd><p>");
+                                        STRADD(buf, "%s\n", e->desc);
+                                        STRADD(buf, "</p></dd>");
+                                }
+                        }
+                        STRADD(buf, "</dl>");
+                        STRADD(buf, "<br>");
+                        STRADD(buf, "<form action=\"/\" method=\"GET\" style=\"display:inline;\">");
+                        STRADD(buf, "<input type=\"hidden\" name=\"button\" value=\"%d\">", -1);
+                        STRADD(buf, "<button type=\"submit\">Save and quit</button>");
+                        STRADD(buf, "</form>");
+                        STRADD(buf, "</body>");
+                        STRADD(buf, "</html>");
+
+                        dprintf(clientfd, "HTTP/1.1 200 OK\r\n");
+                        dprintf(clientfd, "Content-Type: text/html\r\n");
+                        dprintf(clientfd, "Content-Length: %zu\r\n", strlen(buf));
+                        dprintf(clientfd, "\r\n");
+
+                        assert(send(clientfd, buf, strlen(buf), 0) > 0);
+
+                        close(clientfd);
+                        exit(0);
+                }
         }
         close(sockfd);
 }
@@ -311,7 +343,7 @@ load_from_file(const char *filename)
         struct tm tp;
         char *c;
 
-        LOG("LOAD from file %s\n", filename);
+        DEBUG("LOAD from file %s\n", filename);
 
         f = fopen(filename, "r");
         if (f == NULL) {
@@ -340,14 +372,14 @@ load_from_file(const char *filename)
                         else if (!memcmp(buf + 2, "date: ", 6)) {
                                 TRUNCAT(buf, '\n');
                                 ZERO(&tp);
-                                LOG("Reading format %s\n", buf + 8);
+                                DEBUG("Reading format %s\n", buf + 8);
                                 if ((c = strptime(buf + 8, DATETIME_FORMAT, &tp)) && *c) {
                                         fprintf(stderr, "Can not load %s\n", buf + 8);
                                 }
 
                                 tp.tm_isdst = -1; // determine if summer time is in use (+-1h)
                                 task.due = mktime(&tp);
-                                LOG(
+                                DEBUG(
                                 "Task: %s\n"
                                 "\ttime = %d:%d:%d\n"
                                 "\tdate = %d/%d/%d\n"
@@ -388,7 +420,7 @@ load_to_file(const char *filename)
         FILE *f;
         f = fopen(filename, "w");
 
-        LOG("LOAD to file %s\n", filename);
+        DEBUG("LOAD to file %s\n", filename);
 
         if (f == NULL) {
                 fprintf(stderr, "File %s can not be opened to write!\n", filename);
@@ -402,12 +434,12 @@ load_to_file(const char *filename)
                 if (task->desc)
                         fprintf(f, "  desc: %s\n", task->desc);
                 fprintf(f, "\n");
-                LOG("[%s]\n", task->name);
-                LOG("  date: %s\n", overload_date(task->due));
+                DEBUG("[%s]\n", task->name);
+                DEBUG("  date: %s\n", overload_date(task->due));
                 if (task->desc) {
-                        LOG("  desc: %s\n", task->desc);
+                        DEBUG("  desc: %s\n", task->desc);
                 }
-                LOG("\n");
+                DEBUG("\n");
         }
 
         fclose(f);
@@ -554,7 +586,7 @@ add_task()
         tp.tm_isdst = -1; // determine if summer time is in use (+-1h)
         task.due = mktime(&tp);
 
-        LOG(
+        DEBUG(
         "Task: %s\n"
         "  time = %d:%d:%d\n"
         "  date = %d/%d/%d\n"
@@ -590,8 +622,7 @@ main(int argc, char *argv[])
         char **in_file = flag_str("in_file", IN_FILENAME, "Input file");
         char **out_file = flag_str("out_file", IN_FILENAME, "Output file");
         quiet = flag_bool("quiet", false, "Show less output as usual");
-        bool *host = flag_bool("serve", false, "Serve it in the browser");
-        bool *daemon = flag_bool("daemon", false, "Use with -serve to run in the background");
+        bool *host = flag_bool("serve", false, "Start http server daemon");
         bool *die = flag_bool("die", false, "Kill running daemon");
 
         if (!flag_parse(argc, argv)) {
@@ -653,7 +684,7 @@ main(int argc, char *argv[])
         }
 
         else if (*host) {
-                serve(*daemon);
+                serve();
         }
 
         else if (*die) {
@@ -662,7 +693,7 @@ main(int argc, char *argv[])
                 fd = open(PID_FILENAME, O_RDONLY | O_CREAT, 0600);
                 assert(fd >= 0);
                 if (read(fd, &pid, sizeof pid) == sizeof pid) {
-                        LOG("Kill pid %d\n", pid);
+                        DEBUG("Kill pid %d\n", pid);
                         kill(pid, SIGTERM);
                 }
         }
