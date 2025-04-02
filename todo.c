@@ -550,6 +550,7 @@ add_task()
         } else if (sscanf(buf, "%d/%d/%d", &tp.tm_mday, &tp.tm_mon, &tp.tm_year) == 3) {
         } else if (sscanf(buf, "%d/%d", &tp.tm_mday, &tp.tm_mon) == 2) {
                 tp.tm_year = tp_current.tm_year;
+                --tp.tm_mon;
         } else if (sscanf(buf, "%d", &tp.tm_mday) == 1) {
                 tp.tm_year = tp_current.tm_year;
                 tp.tm_mon = tp_current.tm_mon;
