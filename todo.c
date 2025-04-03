@@ -22,6 +22,7 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <semaphore.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -30,6 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -75,7 +77,6 @@ typedef struct {
 typedef DA(Task) Task_da;
 
 Task_da data;
-bool *quiet = NULL;
 
 /* Chatgpt prime */
 const char *no_tasks_messages[] = {
@@ -131,31 +132,49 @@ list_tasks(int fd, Task_da d, const char *format, ...)
         va_start(arg, format);
         qsort(d.data, d.size, sizeof *d.data, compare_tasks_by_date);
 
-        if (*quiet == false) {
-                vdprintf(fd, format, arg);
-                dprintf(fd, ":\n");
-                for_da_each(e, d)
-                {
-                        dprintf(fd, "%d: %s (%s)", da_index(e, d), e->name, overload_date(e->due));
-                        dprintf(fd, e->desc ? ": %s\n" : "\n", e->desc);
-                }
-                if (d.size == 0)
-                        dprintf(fd, "  %s\n", no_tasks_messages[rand() % 10]);
+        vdprintf(fd, format, arg);
+        dprintf(fd, ":\n");
+        for_da_each(e, d)
+        {
+                dprintf(fd, "%d: %s (%s)", da_index(e, d), e->name, overload_date(e->due));
+                dprintf(fd, e->desc ? ": %s\n" : "\n", e->desc);
         }
-
-        else if (d.size > 0) {
-                vdprintf(fd, format, arg);
-                dprintf(fd, ":\n");
-                for_da_each(e, d)
-                {
-                        dprintf(fd, "%d: %s (%s)", da_index(e, d), e->name, overload_date(e->due));
-                        dprintf(fd, e->desc ? ": %s\n" : "\n", e->desc);
-                }
-        }
+        if (d.size == 0)
+                dprintf(fd, "  %s\n", no_tasks_messages[rand() % 10]);
 }
 
 void
-serve()
+kill_self()
+{
+        pid_t pid;
+        int fd;
+
+        sem_t *sem;
+        sem = sem_open("/todo_pid_file_sem", O_CREAT, 0600, 1);
+        assert(sem != SEM_FAILED);
+
+        sem_wait(sem);
+
+        fd = open(PID_FILENAME, O_RDONLY | O_CREAT, 0600);
+        assert(fd >= 0);
+        while (read(fd, &pid, sizeof pid) == sizeof pid) {
+                printf("Kill pid %d\n", pid);
+                kill(pid, SIGTERM);
+        }
+        close(fd);
+
+        fd = open(PID_FILENAME, O_WRONLY | O_TRUNC | O_CREAT, 0600);
+        assert(fd >= 0);
+        pid = getpid();
+        assert(write(fd, &pid, sizeof pid) == sizeof pid);
+        printf("write pid %d\n", pid);
+        close(fd);
+
+        sem_post(sem);
+}
+
+void
+spawn_serve()
 {
         struct sockaddr_in sock_in;
         socklen_t addr_len;
@@ -164,7 +183,6 @@ serve()
         int port;
         char client_ip[INET_ADDRSTRLEN];
         int fd;
-        pid_t pid;
         port = 5002;
 
         DEBUG("Serve at: ");
@@ -188,46 +206,14 @@ serve()
         /* Redirect output to log file */
         fd = open(LOG_FILENAME, O_RDWR | O_APPEND | O_CREAT, 0600);
         assert(fd >= 0);
+
         assert(dup2(fd, STDERR_FILENO) >= 0);
         assert(dup2(fd, STDOUT_FILENO) >= 0);
         /* Close stdin to tell processes that this one is not
          * going to produce more output (otherwise $() will never exit)*/
         close(STDIN_FILENO);
 
-        /* TODO:
-         * The read pid sometimes is diferent from the last pid wrote.
-         * I think that it can be reading a value before the file is
-         * updated or something like that.
-         * This can also be cause by a race condition but it would be
-         * strange as I dont start multiple servers at the same time.
-         * Also the error might be in the printf, so it would look like
-         * an error but it isnt. What is sure is that some daemons where
-         * never killed.
-         *
-         * To test it, run a daemon and see (with ps or similar) that
-         * there is the only one instance of todo running. After calling
-         * todo -serve more times, the previous instances should be killed.
-         * If there is more than one instance alive, something where wrong.
-         * Also it prints some info to LOG_FILENAME.
-         */
-        fd = open(PID_FILENAME, O_RDONLY | O_CREAT, 0600);
-        assert(fd >= 0);
-        if (read(fd, &pid, sizeof pid) == sizeof pid) {
-                printf("Kill pid %d\n", pid);
-                kill(pid, SIGTERM);
-        }
-        else {
-                printf("read (kill) failed: pid %d\n", pid);
-        }
-        close(fd);
-
-        fd = open(PID_FILENAME, O_WRONLY | O_TRUNC | O_CREAT, 0600);
-        assert(fd >= 0);
-        pid = getpid();
-        assert(write(fd, &pid, sizeof pid) == sizeof pid);
-        printf("write pid %d\n", pid);
-        close(fd);
-
+        kill_self();
 
         sockfd = socket(AF_INET, SOCK_STREAM, 0);
         assert(sockfd >= 0);
@@ -240,7 +226,7 @@ serve()
                 if (errno == EADDRINUSE) {
                         ++port;
                         fprintf(stderr, "Port %d already in use! Using %d\n", port - 1, port);
-                        serve();
+                        spawn_serve();
                 }
                 perror("Bind");
                 exit(1);
@@ -609,6 +595,7 @@ add_task()
         da_append(&data, task);
 }
 
+
 int
 main(int argc, char *argv[])
 {
@@ -622,8 +609,7 @@ main(int argc, char *argv[])
         bool *add = flag_bool("add", false, "Add a new task");
         char **in_file = flag_str("in_file", IN_FILENAME, "Input file");
         char **out_file = flag_str("out_file", IN_FILENAME, "Output file");
-        quiet = flag_bool("quiet", false, "Show less output as usual");
-        bool *host = flag_bool("serve", false, "Start http server daemon");
+        bool *serve = flag_bool("serve", false, "Start http server daemon");
         bool *die = flag_bool("die", false, "Kill running daemon");
 
         if (!flag_parse(argc, argv)) {
@@ -684,19 +670,14 @@ main(int argc, char *argv[])
                 da_destroy(&filter);
         }
 
-        else if (*host) {
-                serve();
+        else if (*serve) {
+                spawn_serve();
         }
 
         else if (*die) {
-                int fd;
-                pid_t pid;
-                fd = open(PID_FILENAME, O_RDONLY | O_CREAT, 0600);
-                assert(fd >= 0);
-                if (read(fd, &pid, sizeof pid) == sizeof pid) {
-                        DEBUG("Kill pid %d\n", pid);
-                        kill(pid, SIGTERM);
-                }
+                kill_self();
+                sem_unlink("/todo_pid_file_sem");
+
         }
 
         else {

@@ -1,3 +1,3 @@
 #!/bin/bash
 
-firefox $(todo -serve -daemon)
+firefox $(todo -serve)&
