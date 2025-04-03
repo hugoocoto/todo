@@ -1,0 +1,76 @@
+/* Estilos generales */
+body {
+    font-family: Arial, sans-serif;
+    margin: 40px;
+    background-color: #f4f4f4;
+    color: #333;
+}
+
+/* Título principal */
+h1 {
+    text-align: center;
+    font-size: 2em;
+    color: #222;
+    background-color: transparent;
+    border-bottom: 3px solid #555;
+    padding-bottom: 10px;
+    margin-bottom: 20px;
+}
+
+/* Lista de tareas */
+dl {
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+
+dt {
+    font-weight: bold;
+    font-size: 1em;
+    margin-top: 15px;
+}
+
+dd {
+    background: #eaeaea;
+    font-size: 1em;
+    padding: 10px;
+    border-left: 4px solid #888;
+    border-radius: 0px;
+    margin-top: 4px;
+    margin-bottom: -4px;
+}
+
+dd p {
+    background: #eaeaea;
+    padding: 0px;
+}
+
+/* Formularios y botones */
+form {
+    display: inline;
+    margin-left: 10px;
+}
+
+button {
+    background-color: #008CBA;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    text-align: center;
+    display: inline-block;
+    font-size: 0.8em;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.3s;
+}
+
+button:hover {
+    background-color: #005f73;
+}
+
+/* Sección de guardar y salir */
+br {
+    display: block;
+    margin-top: 20px;
+}

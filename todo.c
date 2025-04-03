@@ -52,6 +52,8 @@
 #define PID_FILENAME TMP_FOLDER ".todo-daemon-pid"
 #define LOG_FILENAME BACKUP_PATH HIDEN "log.txt"
 
+#define CSS_FILE "styles.css"
+
 #define UNREACHABLE(...)                                                            \
         do {                                                                        \
                 printf("Unreachable code!" __VA_OPT__(": %s") "\n", ##__VA_ARGS__); \
@@ -178,6 +180,11 @@ spawn_serve()
         int sockfd;
         int clientfd;
         char client_ip[INET_ADDRSTRLEN];
+        char css_file_buf[128];
+        char inbuf[128] = { 0 };
+        char buf[1024 * 1024] = { 0 };
+        int n;
+        int fd;
 
         /* As fork is called twice it is not attacked to terminal */
         if (fork() != 0) {
@@ -222,8 +229,6 @@ retry:
         close(STDERR_FILENO);
 
         while (1) {
-                char inbuf[128] = { 0 };
-                char buf[1024 * 1024] = { 0 };
                 int clicked_elem_index;
                 addr_len = sizeof(struct sockaddr_in);
 
@@ -255,7 +260,22 @@ retry:
 
                         qsort(data.data, data.size, sizeof *data.data, compare_tasks_by_date);
 
+                        strcatf(buf, "<!DOCTYPE html>");
                         strcatf(buf, "<html>");
+                        strcatf(buf, "<head>");
+                        strcatf(buf, "<style>");
+
+#if defined CSS_FILE
+                        fd = open(CSS_FILE, O_RDONLY);
+                        assert(fd >= 0);
+                        while ((n = read(fd, css_file_buf, sizeof css_file_buf - 1)) > 0) {
+                                css_file_buf[n] = 0;
+                                strcatf(buf, "%s", css_file_buf);
+                        }
+                        close(fd);
+#endif
+                        strcatf(buf, "</style>");
+                        strcatf(buf, "</head>");
                         strcatf(buf, "<body>");
                         strcatf(buf, "<title>");
                         strcatf(buf, "Todo");

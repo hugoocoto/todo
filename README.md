@@ -14,8 +14,10 @@ run todo -help. If you need more documentation, read the source code.
 ## Version Status
 Currently it is stable enought to be used.
 
-## Todo
-Improve http server:
-- Css
-- Extra space after description
+# Http task visualizer
+
+Running `todo -serve` creates a daemon that serve a http client
+in the address returned by the command.
+
+![Example Image](./serve1.png)
 
