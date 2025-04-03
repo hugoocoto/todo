@@ -49,11 +49,9 @@
 
 #define IN_FILENAME BACKUP_PATH "todo.out"
 #define OUT_FILENAME BACKUP_PATH "todo.out"
-#define PID_FILENAME TMP_FOLDER ".todo-daemon-pid"
+#define PID_FILENAME TMP_FOLDER "todo-daemon-pid"
 #define LOG_FILENAME BACKUP_PATH HIDEN "log.txt"
-
-#define CSS_FILE "styles.css"
-
+#define CSS_NO_FILE "none"
 #define UNREACHABLE(...)                                                            \
         do {                                                                        \
                 printf("Unreachable code!" __VA_OPT__(": %s") "\n", ##__VA_ARGS__); \
@@ -98,6 +96,7 @@ const char *no_tasks_messages[] = {
 };
 
 bool *quiet = NULL;
+char **css_file;
 
 static char *
 overload_date(time_t time)
@@ -223,7 +222,9 @@ retry:
         assert(listen(sockfd, MAX_CLIENTS) >= 0);
 
         printf("http://127.0.0.1:%d\n", port);
+
         fflush(stdout);
+        fflush(stderr);
         close(STDIN_FILENO);
         close(STDOUT_FILENO);
         close(STDERR_FILENO);
@@ -263,18 +264,19 @@ retry:
                         strcatf(buf, "<!DOCTYPE html>");
                         strcatf(buf, "<html>");
                         strcatf(buf, "<head>");
-                        strcatf(buf, "<style>");
 
-#if defined CSS_FILE
-                        fd = open(CSS_FILE, O_RDONLY);
-                        assert(fd >= 0);
-                        while ((n = read(fd, css_file_buf, sizeof css_file_buf - 1)) > 0) {
-                                css_file_buf[n] = 0;
-                                strcatf(buf, "%s", css_file_buf);
+                        if (strcmp(*css_file, CSS_NO_FILE) != 0) {
+                                strcatf(buf, "<style>");
+                                fd = open(*css_file, O_RDONLY);
+                                assert(fd >= 0);
+                                while ((n = read(fd, css_file_buf, sizeof css_file_buf - 1)) > 0) {
+                                        css_file_buf[n] = 0;
+                                        strcatf(buf, "%s", css_file_buf);
+                                }
+                                close(fd);
+                                strcatf(buf, "</style>");
                         }
-                        close(fd);
-#endif
-                        strcatf(buf, "</style>");
+
                         strcatf(buf, "</head>");
                         strcatf(buf, "<body>");
                         strcatf(buf, "<title>");
@@ -568,6 +570,7 @@ main(int argc, char *argv[])
         bool *add = flag_bool("add", false, "Add a new task");
         char **in_file = flag_str("in_file", IN_FILENAME, "Input file");
         char **out_file = flag_str("out_file", IN_FILENAME, "Output file");
+        css_file = flag_str("css_file", CSS_NO_FILE, "CSS file");
         bool *serve = flag_bool("serve", false, "Start http server daemon");
         bool *die = flag_bool("die", false, "Kill running daemon");
         quiet = flag_bool("quiet", false, "Do not show unneded output");
