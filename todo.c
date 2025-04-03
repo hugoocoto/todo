@@ -48,6 +48,16 @@
 #define PID_FILENAME TMP_FOLDER ".todo-daemon-pid"
 #define LOG_FILENAME BACKUP_PATH HIDEN "log.txt"
 
+#define PORT 5002
+#define MAX_ATTEMPTS 10
+
+
+#define UNREACHABLE(...)                                                            \
+        do {                                                                        \
+                printf("Unreachable code!" __VA_OPT__(": %s") "\n", ##__VA_ARGS__); \
+                exit(1);                                                            \
+        } while (0)
+
 #define MAX_CLIENTS 16
 
 #define TODO(what)
@@ -59,6 +69,8 @@
                 if ((_c_ = strchr((str), (chr)))) \
                         *_c_ = 0;                 \
         } while (0)
+
+#define DATETIME_FORMAT "%c"
 
 typedef struct {
         time_t due;
@@ -83,8 +95,6 @@ const char *no_tasks_messages[] = {
         "Nothing due now! Maybe organize your workspace?",
         "You're ahead of schedule! Keep up the great work."
 };
-
-#define DATETIME_FORMAT "%c"
 
 static char *
 overload_date(time_t time)
@@ -143,7 +153,6 @@ kill_self()
         fd = open(PID_FILENAME, O_RDONLY | O_CREAT, 0600);
         assert(fd >= 0);
         while (read(fd, &pid, sizeof pid) == sizeof pid) {
-                printf("Kill pid %d\n", pid);
                 kill(pid, SIGTERM);
         }
         close(fd);
@@ -152,7 +161,6 @@ kill_self()
         assert(fd >= 0);
         pid = getpid();
         assert(write(fd, &pid, sizeof pid) == sizeof pid);
-        printf("write pid %d\n", pid);
         close(fd);
 
         sem_post(sem);
@@ -161,16 +169,13 @@ kill_self()
 void
 spawn_serve()
 {
+        static int port = PORT;
         struct sockaddr_in sock_in;
         socklen_t addr_len;
         int sockfd;
         int clientfd;
-        int port;
         char client_ip[INET_ADDRSTRLEN];
         int fd;
-        port = 5002;
-
-        printf("http://127.0.0.1:%d\n", port);
 
         /* Todo:
          * When launched as `firefox $(todo -serve)` it opens two clients.
@@ -186,17 +191,6 @@ spawn_serve()
                 exit(0);
         }
 
-
-        /* Redirect output to log file */
-        fd = open(LOG_FILENAME, O_RDWR | O_APPEND | O_CREAT, 0600);
-        assert(fd >= 0);
-
-        assert(dup2(fd, STDERR_FILENO) >= 0);
-        assert(dup2(fd, STDOUT_FILENO) >= 0);
-        /* Close stdin to tell processes that this one is not
-         * going to produce more output (otherwise $() will never exit)*/
-        close(STDIN_FILENO);
-
         kill_self();
 
         sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -204,19 +198,31 @@ spawn_serve()
 
         sock_in.sin_family = AF_INET;
         sock_in.sin_addr.s_addr = htonl(INADDR_ANY);
-        sock_in.sin_port = htons(port);
+
+retry:
         errno = 0;
+        sock_in.sin_port = htons(port);
+
         if (bind(sockfd, (struct sockaddr *) &sock_in, sizeof(struct sockaddr_in)) < 0) {
                 if (errno == EADDRINUSE) {
                         ++port;
-                        fprintf(stderr, "Port %d already in use! Using %d\n", port - 1, port);
-                        spawn_serve();
+                        if (port - PORT > MAX_ATTEMPTS) {
+                                perror("Bind max attempts");
+                                exit(1);
+                        }
+                        goto retry;
                 }
                 perror("Bind");
                 exit(1);
         }
 
         assert(listen(sockfd, MAX_CLIENTS) >= 0);
+
+        printf("http://127.0.0.1:%d\n", port);
+        fflush(stdout);
+        close(STDIN_FILENO);
+        close(STDOUT_FILENO);
+        close(STDERR_FILENO);
 
         while (1) {
                 char inbuf[128] = { 0 };
