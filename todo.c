@@ -39,6 +39,10 @@
 
 #include "da.h"
 
+#define PORT 5002
+#define MAX_ATTEMPTS 10
+#define MAX_CLIENTS 16
+
 #define BACKUP_PATH "/home/hugo/"
 #define TMP_FOLDER "/tmp/"
 #define HIDEN "."
@@ -48,17 +52,12 @@
 #define PID_FILENAME TMP_FOLDER ".todo-daemon-pid"
 #define LOG_FILENAME BACKUP_PATH HIDEN "log.txt"
 
-#define PORT 5002
-#define MAX_ATTEMPTS 10
-
-
 #define UNREACHABLE(...)                                                            \
         do {                                                                        \
                 printf("Unreachable code!" __VA_OPT__(": %s") "\n", ##__VA_ARGS__); \
                 exit(1);                                                            \
         } while (0)
 
-#define MAX_CLIENTS 16
 
 #define TODO(what)
 #define ZERO(obj_ptr) memset((obj_ptr), 0, sizeof(obj_ptr)[0])
@@ -96,6 +95,8 @@ const char *no_tasks_messages[] = {
         "You're ahead of schedule! Keep up the great work."
 };
 
+bool *quiet = NULL;
+
 static char *
 overload_date(time_t time)
 {
@@ -127,14 +128,16 @@ list_tasks(int fd, Task_da d, const char *format, ...)
         va_start(arg, format);
         qsort(d.data, d.size, sizeof *d.data, compare_tasks_by_date);
 
-        vdprintf(fd, format, arg);
-        dprintf(fd, ":\n");
+        if (!*quiet) {
+                vdprintf(fd, format, arg);
+                dprintf(fd, ":\n");
+        }
         for_da_each(e, d)
         {
                 dprintf(fd, "%d: %s (%s)", da_index(e, d), e->name, overload_date(e->due));
                 dprintf(fd, e->desc ? ": %s\n" : "\n", e->desc);
         }
-        if (d.size == 0)
+        if (d.size == 0 && !*quiet)
                 dprintf(fd, "  %s\n", no_tasks_messages[rand() % 10]);
 }
 
@@ -175,12 +178,6 @@ spawn_serve()
         int sockfd;
         int clientfd;
         char client_ip[INET_ADDRSTRLEN];
-        int fd;
-
-        /* Todo:
-         * When launched as `firefox $(todo -serve)` it opens two clients.
-         * I dont know why. It is not a critical problem but is quite anoying.
-         */
 
         /* As fork is called twice it is not attacked to terminal */
         if (fork() != 0) {
@@ -553,6 +550,7 @@ main(int argc, char *argv[])
         char **out_file = flag_str("out_file", IN_FILENAME, "Output file");
         bool *serve = flag_bool("serve", false, "Start http server daemon");
         bool *die = flag_bool("die", false, "Kill running daemon");
+        quiet = flag_bool("quiet", false, "Do not show unneded output");
 
         if (!flag_parse(argc, argv)) {
                 usage(stderr);
