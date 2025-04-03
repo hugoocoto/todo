@@ -3,8 +3,7 @@
  * Desc:
  * A simple to-do list for the terminal written in C.
  * You can add tasks with dates and retrieve them later
- * by time frames like a week.
- *
+ * by time frames like a week. With http server!
  *
  * Author: Hugo Coto Florez
  * Repo: https://github.com/hugootoflorez/todo
@@ -61,13 +60,6 @@
                         *_c_ = 0;                 \
         } while (0)
 
-#define ENABLE_DEBUG 0
-#if defined(ENABLE_DEBUG) && ENABLE_DEBUG
-#define DEBUG(format, ...) printf("[INFO] " format, ##__VA_ARGS__)
-#else
-#define DEBUG(...)
-#endif
-
 typedef struct {
         time_t due;
         char *name;
@@ -114,13 +106,6 @@ void
 add_if_valid(Task task)
 {
         if (task.name && task.due) {
-                DEBUG("[%s]\n", task.name);
-                DEBUG("  date: %s\n", overload_date(task.due));
-                if (task.desc) {
-                        DEBUG("  desc: %s\n", task.desc);
-                }
-                DEBUG("\n");
-
                 da_append(&data, task);
         }
 }
@@ -185,7 +170,6 @@ spawn_serve()
         int fd;
         port = 5002;
 
-        DEBUG("Serve at: ");
         printf("http://127.0.0.1:%d\n", port);
 
         /* Todo:
@@ -239,7 +223,6 @@ spawn_serve()
                 char buf[1024 * 1024] = { 0 };
                 int clicked_elem_index;
                 addr_len = sizeof(struct sockaddr_in);
-                DEBUG("Waiting for a new connection...\n");
 
                 if (((clientfd = accept(sockfd, (struct sockaddr *) &sock_in, &addr_len)) < 0)) {
                         perror("Accept");
@@ -255,7 +238,6 @@ spawn_serve()
                                 continue;
                         default:
                                 if (sscanf(inbuf, "GET /?button=%d HTTP/1.1\r\n", &clicked_elem_index) == 1) {
-                                        DEBUG("Clicked button %d\n", clicked_elem_index);
                                         switch (clicked_elem_index) {
                                         default:
                                                 da_remove(&data, clicked_elem_index);
@@ -267,7 +249,6 @@ spawn_serve()
                         }
 
                         inet_ntop(AF_INET, &sock_in.sin_addr, client_ip, addr_len);
-                        DEBUG("New connection: %s/%d\n", client_ip, ntohs(sock_in.sin_port));
 
                         qsort(data.data, data.size, sizeof *data.data, compare_tasks_by_date);
 
@@ -329,8 +310,6 @@ load_from_file(const char *filename)
         struct tm tp;
         char *c;
 
-        DEBUG("LOAD from file %s\n", filename);
-
         f = fopen(filename, "r");
         if (f == NULL) {
                 fprintf(stderr, "File %s can not be opened! You should create it\n", filename);
@@ -358,28 +337,12 @@ load_from_file(const char *filename)
                         else if (!memcmp(buf + 2, "date: ", 6)) {
                                 TRUNCAT(buf, '\n');
                                 ZERO(&tp);
-                                DEBUG("Reading format %s\n", buf + 8);
                                 if ((c = strptime(buf + 8, DATETIME_FORMAT, &tp)) && *c) {
                                         fprintf(stderr, "Can not load %s\n", buf + 8);
                                 }
 
                                 tp.tm_isdst = -1; // determine if summer time is in use (+-1h)
                                 task.due = mktime(&tp);
-                                DEBUG(
-                                "Task: %s\n"
-                                "\ttime = %d:%d:%d\n"
-                                "\tdate = %d/%d/%d\n"
-                                "\twday = %d\n"
-                                "\tyday = %d\n",
-                                task.name,
-                                tp.tm_hour,
-                                tp.tm_min,
-                                tp.tm_sec,
-                                tp.tm_mday,
-                                tp.tm_mon,
-                                tp.tm_year + 1900,
-                                tp.tm_wday,
-                                tp.tm_yday);
                         }
 
                         /* INVALID ARGUMENT */
@@ -406,8 +369,6 @@ load_to_file(const char *filename)
         FILE *f;
         f = fopen(filename, "w");
 
-        DEBUG("LOAD to file %s\n", filename);
-
         if (f == NULL) {
                 fprintf(stderr, "File %s can not be opened to write!\n", filename);
                 return 0;
@@ -420,12 +381,6 @@ load_to_file(const char *filename)
                 if (task->desc)
                         fprintf(f, "  desc: %s\n", task->desc);
                 fprintf(f, "\n");
-                DEBUG("[%s]\n", task->name);
-                DEBUG("  date: %s\n", overload_date(task->due));
-                if (task->desc) {
-                        DEBUG("  desc: %s\n", task->desc);
-                }
-                DEBUG("\n");
         }
 
         fclose(f);
@@ -572,25 +527,6 @@ add_task()
 
         tp.tm_isdst = -1; // determine if summer time is in use (+-1h)
         task.due = mktime(&tp);
-
-        DEBUG(
-        "Task: %s\n"
-        "  time = %d:%d:%d\n"
-        "  date = %d/%d/%d\n"
-        "  wday = %d\n"
-        "  yday = %d\n"
-        "  isdst = %d\n",
-        task.name,
-        tp.tm_hour,
-        tp.tm_min,
-        tp.tm_sec,
-        tp.tm_mday,
-        tp.tm_mon,
-        tp.tm_year + 1900,
-        tp.tm_wday,
-        tp.tm_yday,
-        tp.tm_isdst);
-
 
         da_append(&data, task);
 }
