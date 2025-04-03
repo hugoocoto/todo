@@ -52,7 +52,7 @@
 
 #define TODO(what)
 #define ZERO(obj_ptr) memset((obj_ptr), 0, sizeof(obj_ptr)[0])
-#define STRADD(strbuf, what, ...) sprintf((strbuf) + strlen(strbuf), what, ##__VA_ARGS__)
+#define strcatf(strbuf, what, ...) sprintf((strbuf) + strlen(strbuf), what, ##__VA_ARGS__)
 #define TRUNCAT(str, chr)                         \
         do {                                      \
                 char *_c_;                        \
@@ -252,40 +252,40 @@ spawn_serve()
 
                         qsort(data.data, data.size, sizeof *data.data, compare_tasks_by_date);
 
-                        STRADD(buf, "<html>");
-                        STRADD(buf, "<body>");
-                        STRADD(buf, "<title>");
-                        STRADD(buf, "Todo");
-                        STRADD(buf, "</title>");
-                        STRADD(buf, "<h1>");
-                        STRADD(buf, "Tasks");
-                        STRADD(buf, "</h1>");
-                        STRADD(buf, "<dl>");
+                        strcatf(buf, "<html>");
+                        strcatf(buf, "<body>");
+                        strcatf(buf, "<title>");
+                        strcatf(buf, "Todo");
+                        strcatf(buf, "</title>");
+                        strcatf(buf, "<h1>");
+                        strcatf(buf, "Tasks");
+                        strcatf(buf, "</h1>");
+                        strcatf(buf, "<dl>");
                         for_da_each(e, data)
                         {
-                                STRADD(buf, "<dt>");
-                                STRADD(buf, "%s", e->name);
-                                STRADD(buf, "<form action=\"/\" method=\"GET\" style=\"display:inline;\">");
-                                STRADD(buf, "<input type=\"hidden\" name=\"button\" value=\"%d\">", da_index(e, data));
-                                STRADD(buf, "<button type=\"submit\">Done</button>");
-                                STRADD(buf, "</form>");
-                                STRADD(buf, "<dd>");
-                                STRADD(buf, "%s", overload_date(e->due));
-                                STRADD(buf, "</dd>");
+                                strcatf(buf, "<dt>");
+                                strcatf(buf, "%s", e->name);
+                                strcatf(buf, "<form action=\"/\" method=\"GET\" style=\"display:inline;\">");
+                                strcatf(buf, "<input type=\"hidden\" name=\"button\" value=\"%d\">", da_index(e, data));
+                                strcatf(buf, "<button type=\"submit\">Done</button>");
+                                strcatf(buf, "</form>");
+                                strcatf(buf, "<dd>");
+                                strcatf(buf, "%s", overload_date(e->due));
+                                strcatf(buf, "</dd>");
                                 if (e->desc) {
-                                        STRADD(buf, "<dd><p>");
-                                        STRADD(buf, "%s\n", e->desc);
-                                        STRADD(buf, "</p></dd>");
+                                        strcatf(buf, "<dd><p>");
+                                        strcatf(buf, "%s\n", e->desc);
+                                        strcatf(buf, "</p></dd>");
                                 }
                         }
-                        STRADD(buf, "</dl>");
-                        STRADD(buf, "<br>");
-                        STRADD(buf, "<form action=\"/\" method=\"GET\" style=\"display:inline;\">");
-                        STRADD(buf, "<input type=\"hidden\" name=\"button\" value=\"%d\">", -1);
-                        STRADD(buf, "<button type=\"submit\">Save and quit</button>");
-                        STRADD(buf, "</form>");
-                        STRADD(buf, "</body>");
-                        STRADD(buf, "</html>");
+                        strcatf(buf, "</dl>");
+                        strcatf(buf, "<br>");
+                        strcatf(buf, "<form action=\"/\" method=\"GET\" style=\"display:inline;\">");
+                        strcatf(buf, "<input type=\"hidden\" name=\"button\" value=\"%d\">", -1);
+                        strcatf(buf, "<button type=\"submit\">Save and quit</button>");
+                        strcatf(buf, "</form>");
+                        strcatf(buf, "</body>");
+                        strcatf(buf, "</html>");
 
                         dprintf(clientfd, "HTTP/1.1 200 OK\r\n");
                         dprintf(clientfd, "Content-Type: text/html\r\n");
