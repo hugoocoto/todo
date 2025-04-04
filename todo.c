@@ -51,7 +51,8 @@
 #define OUT_FILENAME BACKUP_PATH "todo.out"
 #define PID_FILENAME TMP_FOLDER "todo-daemon-pid"
 #define LOG_FILENAME BACKUP_PATH HIDEN "log.txt"
-#define CSS_NO_FILE "none"
+#define CSS_FILENAME BACKUP_PATH "code/todo/" \
+                                 "styles.css"
 #define UNREACHABLE(...)                                                            \
         do {                                                                        \
                 printf("Unreachable code!" __VA_OPT__(": %s") "\n", ##__VA_ARGS__); \
@@ -265,10 +266,11 @@ retry:
                         strcatf(buf, "<html>");
                         strcatf(buf, "<head>");
 
-                        if (strcmp(*css_file, CSS_NO_FILE) != 0) {
+                        /* Try to open and load CSS file. If something fails dont report
+                         * and use default formatting. */
+                        fd = open(*css_file, O_RDONLY);
+                        if (fd >= 0) {
                                 strcatf(buf, "<style>");
-                                fd = open(*css_file, O_RDONLY);
-                                assert(fd >= 0);
                                 while ((n = read(fd, css_file_buf, sizeof css_file_buf - 1)) > 0) {
                                         css_file_buf[n] = 0;
                                         strcatf(buf, "%s", css_file_buf);
@@ -570,7 +572,7 @@ main(int argc, char *argv[])
         bool *add = flag_bool("add", false, "Add a new task");
         char **in_file = flag_str("in_file", IN_FILENAME, "Input file");
         char **out_file = flag_str("out_file", IN_FILENAME, "Output file");
-        css_file = flag_str("css_file", CSS_NO_FILE, "CSS file");
+        css_file = flag_str("css_file", CSS_FILENAME, "CSS file");
         bool *serve = flag_bool("serve", false, "Start http server daemon");
         bool *die = flag_bool("die", false, "Kill running daemon");
         quiet = flag_bool("quiet", false, "Do not show unneded output");
