@@ -16,13 +16,13 @@ Currently it is stable enought to be used.
 
 ## Installation
 #### Installation from source
-Please take a look to the default vaules in options.h before build it.
+Please take a look at the default vaules in options.h before build it.
 ```sh
 git clone https://github.com/hugocotoflorez/todo
 cd todo
 make
 ```
-The makefile compliles the sources and copy the executable to
+The makefile compliles the sources and copies the executable to
 `~/.local/bin/`. Make sure it is in the PATH to be able to use
 `todo` without full route.
 
