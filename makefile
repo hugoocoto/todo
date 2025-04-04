@@ -1,5 +1,6 @@
 OUT = todo
 FLAGS = -Wall -Wextra -std=c11 -ggdb
+CC = gcc
 
 install: todo
 	cp todo ~/.local/bin/
@@ -7,5 +8,5 @@ install: todo
 todo: todo.o
 	gcc $(FLAGS) todo.o -o $(OUT)
 
-todo.o: todo.c flag.h da.h
+todo.o: todo.c flag.h da.h options.h
 	gcc -c todo.c $(FLAGS)

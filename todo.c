@@ -21,6 +21,7 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <pthread.h>
 #include <semaphore.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -39,28 +40,24 @@
 
 #include "da.h"
 
-#define PORT 5002
-#define MAX_ATTEMPTS 10
-#define MAX_CLIENTS 16
+#include "options.h"
 
-#define BACKUP_PATH "/home/hugo/"
-#define TMP_FOLDER "/tmp/"
-#define HIDEN "."
+#define UNREACHABLE(...)                                                     \
+        do {                                                                 \
+                LOG(__FILE__ ":%d: ", __LINE__);                             \
+                LOG("[Unreachable]" __VA_OPT__(": %s") "\n", ##__VA_ARGS__); \
+                exit(1);                                                     \
+        } while (0)
 
-#define IN_FILENAME BACKUP_PATH "todo.out"
-#define OUT_FILENAME BACKUP_PATH "todo.out"
-#define PID_FILENAME TMP_FOLDER "todo-daemon-pid"
-#define LOG_FILENAME BACKUP_PATH HIDEN "log.txt"
-#define CSS_FILENAME BACKUP_PATH "code/todo/" \
-                                 "styles.css"
-#define UNREACHABLE(...)                                                            \
+#define NOIMPLEMENTED(...)                                                          \
         do {                                                                        \
-                printf("Unreachable code!" __VA_OPT__(": %s") "\n", ##__VA_ARGS__); \
+                LOG(__FILE__ ":%d: ", __LINE__);                                    \
+                LOG("[No yet implemented]" __VA_OPT__(": %s") "\n", ##__VA_ARGS__); \
                 exit(1);                                                            \
         } while (0)
 
-
 #define TODO(what)
+
 #define ZERO(obj_ptr) memset((obj_ptr), 0, sizeof(obj_ptr)[0])
 #define strcatf(strbuf, what, ...) sprintf((strbuf) + strlen(strbuf), what, ##__VA_ARGS__)
 #define TRUNCAT(str, chr)                         \
@@ -70,7 +67,14 @@
                         *_c_ = 0;                 \
         } while (0)
 
-#define DATETIME_FORMAT "%c"
+#if defined(WRITE_TO_LOG) && WRITE_TO_LOG
+#define LOG(format, ...) fprintf(stderr, (format), ##__VA_ARGS__)
+#else
+#define LOG(...) \
+        do {     \
+        } while (0)
+#endif
+
 
 typedef struct {
         time_t due;
@@ -81,8 +85,10 @@ typedef struct {
 typedef DA(Task) Task_da;
 
 Task_da data;
+char **out_file;
+char **css_file;
+bool *quiet = NULL;
 
-/* Chatgpt prime */
 const char *no_tasks_messages[] = {
         "No tasks for this date! Enjoy your free time.",
         "You're all caught up! Maybe start something new?",
@@ -96,18 +102,15 @@ const char *no_tasks_messages[] = {
         "You're ahead of schedule! Keep up the great work."
 };
 
-bool *quiet = NULL;
-char **css_file;
-
 static char *
 overload_date(time_t time)
 {
-        static char global_datetime_buffer[64];
+        static char global_datetime_buffer[DATETIME_MAXLEN];
         strftime(global_datetime_buffer, sizeof global_datetime_buffer - 1, DATETIME_FORMAT, localtime(&time));
         return global_datetime_buffer;
 }
 
-int
+static int
 compare_tasks_by_date(const void *a, const void *b)
 {
         Task *ea = (Task *) a;
@@ -115,7 +118,7 @@ compare_tasks_by_date(const void *a, const void *b)
         return (int) (ea->due - eb->due);
 }
 
-void
+static inline void
 add_if_valid(Task task)
 {
         if (task.name && task.due) {
@@ -123,7 +126,7 @@ add_if_valid(Task task)
         }
 }
 
-void
+static void
 list_tasks(int fd, Task_da d, const char *format, ...)
 {
         va_list arg;
@@ -143,14 +146,102 @@ list_tasks(int fd, Task_da d, const char *format, ...)
                 dprintf(fd, "  %s\n", no_tasks_messages[rand() % 10]);
 }
 
-void
+static int
+load_from_file(const char *filename)
+{
+        FILE *f;
+        char buf[128];
+        Task task = { 0 };
+        struct tm tp;
+        char *c;
+
+        f = fopen(filename, "r");
+        if (f == NULL) {
+                LOG("File %s can not be opened! You should create it\n", filename);
+                return 0;
+        }
+
+        while (fgets(buf, sizeof buf - 1, f)) {
+                switch (buf[0]) {
+                        /* NAME */
+                case '[':
+                        add_if_valid(task);
+                        ZERO(&task);
+                        TRUNCAT(buf, ']');
+                        task.name = strdup(buf + 1);
+                        break;
+
+                        /* DESCRIPTION */
+                case ' ':
+                        if (!memcmp(buf + 2, "desc: ", 6)) {
+                                TRUNCAT(buf + 8, '\n');
+                                task.desc = strdup(buf + 8);
+                        }
+
+                        /* DATE TIME */
+                        else if (!memcmp(buf + 2, "date: ", 6)) {
+                                TRUNCAT(buf, '\n');
+                                ZERO(&tp);
+                                if ((c = strptime(buf + 8, DATETIME_FORMAT, &tp)) && *c) {
+                                        LOG("Can not load %s\n", buf + 8);
+                                }
+
+                                tp.tm_isdst = -1; // determine if summer time is in use (+-1h)
+                                task.due = mktime(&tp);
+                        }
+
+                        /* INVALID ARGUMENT */
+                        else
+                                LOG("Unknown token: %s\n", buf);
+                        break;
+
+                case '\n':
+                        break;
+                default:
+                        LOG("Unknown token: %s\n", buf);
+                        break;
+                }
+        }
+
+        add_if_valid(task);
+        fclose(f);
+        return 1;
+}
+
+static int
+load_to_file(const char *filename)
+{
+        FILE *f;
+        f = fopen(filename, "w");
+
+        if (f == NULL) {
+                LOG("File %s can not be opened to write!\n", filename);
+                return 0;
+        }
+
+        for_da_each(task, data)
+        {
+                fprintf(f, "[%s]\n", task->name);
+                fprintf(f, "  date: %s\n", overload_date(task->due));
+                if (task->desc)
+                        fprintf(f, "  desc: %s\n", task->desc);
+                fprintf(f, "\n");
+        }
+
+        fclose(f);
+        return data.size;
+}
+
+static void
 kill_self()
 {
+        static sem_t *sem = NULL;
         pid_t pid;
         int fd;
 
-        sem_t *sem;
-        sem = sem_open("/todo_pid_file_sem", O_CREAT, 0600, 1);
+        if (!sem) {
+                sem = sem_open("/todo_pid_file_sem", O_CREAT, 0600, 1);
+        }
         assert(sem != SEM_FAILED);
 
         sem_wait(sem);
@@ -171,20 +262,137 @@ kill_self()
         sem_post(sem);
 }
 
-void
+/* Shared info between serve loop and serve_gen_response thread */
+struct serve_data {
+        struct sockaddr_in sock_in;
+        int clientfd;
+        int addr_len;
+};
+
+static void *
+serve_gen_response(void *args)
+{
+        struct serve_data sdata = *(struct serve_data *) args;
+        char buf[BUFSIZE];
+        char css_file_buf[1024];
+        int clicked_elem_index;
+        int fd;
+        int n;
+
+        if (sdata.clientfd < 0) {
+                LOG("invalid clientfd\n");
+                return NULL;
+        }
+
+        switch (read(sdata.clientfd, buf, sizeof buf - 1)) {
+        default:
+                if (sscanf(buf, "GET /?button=%d HTTP/1.1", &clicked_elem_index) == 1) {
+                        switch (clicked_elem_index) {
+                        default:
+                                /* Buttons from 0 to tasks num - 1 */
+                                da_remove(&data, clicked_elem_index);
+                                break;
+                        case -1:
+                                /* Save button */
+                                load_to_file(*out_file);
+                                break;
+                        }
+                        break;
+                }
+                if (strncmp(buf, "GET /favicon.ico HTTP/1.1", 25) == 0) {
+                        /* The client ask for the icon. As it is not needed,
+                         * return and dont send anything to the client. */
+                        return NULL;
+                }
+                break;
+
+        case 0:
+        case -1:
+                LOG("Internal Server Error! Reload the page\n");
+                return NULL;
+        }
+
+        qsort(data.data, data.size, sizeof *data.data, compare_tasks_by_date);
+
+        *buf = 0; // set buf size to 0
+
+        /* ---------- INLINE HTML ---------- */
+
+        strcatf(buf, "<!DOCTYPE html>");
+        strcatf(buf, "<html>");
+        strcatf(buf, "<head>");
+
+        /* Try to open and load CSS file directly into <style> ... </style>. */
+        fd = open(*css_file, O_RDONLY);
+        if (fd >= 0) {
+                strcatf(buf, "<style>");
+                while ((n = read(fd, css_file_buf, sizeof css_file_buf - 1)) > 0) {
+                        css_file_buf[n] = 0;
+                        strcatf(buf, "%s", css_file_buf);
+                }
+                close(fd);
+                strcatf(buf, "</style>");
+        } else
+                LOG("Error: cant load css file '%s'\n", *css_file);
+
+        strcatf(buf, "</head>");
+        strcatf(buf, "<body>");
+        strcatf(buf, "<title>");
+        strcatf(buf, "Todo");
+        strcatf(buf, "</title>");
+        strcatf(buf, "<h1>");
+        strcatf(buf, "Tasks");
+        strcatf(buf, "</h1>");
+        strcatf(buf, "<dl>");
+
+        for_da_each(e, data)
+        {
+                strcatf(buf, "<dt>");
+                strcatf(buf, "%s", e->name);
+                strcatf(buf, "<form action=\"/\" method=\"GET\" style=\"display:inline;\">");
+                strcatf(buf, "<input type=\"hidden\" name=\"button\" value=\"%d\">", da_index(e, data));
+                strcatf(buf, "<button type=\"submit\">Done</button>");
+                strcatf(buf, "</form>");
+                strcatf(buf, "<dd>");
+                strcatf(buf, "%s", overload_date(e->due));
+                strcatf(buf, "</dd>");
+                if (e->desc) {
+                        strcatf(buf, "<dd><p>");
+                        strcatf(buf, "%s\n", e->desc);
+                        strcatf(buf, "</p></dd>");
+                }
+        }
+
+        strcatf(buf, "</dl>");
+        strcatf(buf, "<br>");
+        strcatf(buf, "<form action=\"/\" method=\"GET\" style=\"display:inline;\">");
+        strcatf(buf, "<input type=\"hidden\" name=\"button\" value=\"%d\">", -1);
+        strcatf(buf, "<button type=\"submit\">Save</button>");
+        strcatf(buf, "</form>");
+        strcatf(buf, "</body>");
+        strcatf(buf, "</html>");
+
+        dprintf(sdata.clientfd, "HTTP/1.1 200 OK\r\n");
+        dprintf(sdata.clientfd, "Content-Type: text/html\r\n");
+        dprintf(sdata.clientfd, "Content-Length: %zu\r\n", strlen(buf));
+        dprintf(sdata.clientfd, "\r\n");
+
+        assert(send(sdata.clientfd, buf, strlen(buf), 0) > 0);
+
+        close(sdata.clientfd);
+        return 0;
+}
+
+static void
 spawn_serve()
 {
         static int port = PORT;
         struct sockaddr_in sock_in;
+        pthread_t thread_id;
         socklen_t addr_len;
         int sockfd;
         int clientfd;
-        char client_ip[INET_ADDRSTRLEN];
-        char css_file_buf[128];
-        char inbuf[128] = { 0 };
-        char buf[1024 * 1024] = { 0 };
-        int n;
-        int fd;
+        int status;
 
         /* As fork is called twice it is not attacked to terminal */
         if (fork() != 0) {
@@ -222,199 +430,51 @@ retry:
 
         assert(listen(sockfd, MAX_CLIENTS) >= 0);
 
+        /* Show the address before close descriptors so it can be redirected
+         * Example: ~$ firefox $(todo -serve)
+         * It should open a client in the browser */
         printf("http://127.0.0.1:%d\n", port);
 
+        /* Man page of close said that it flushes descriptors, but I need to
+         * do this to be able to redirect output to browser without errors */
         fflush(stdout);
         fflush(stderr);
-        close(STDIN_FILENO);
+
         close(STDOUT_FILENO);
         close(STDERR_FILENO);
 
+        /* Open logfile at stdin and stdout */
+        assert(open(LOG_FILENAME, O_CREAT | O_WRONLY | O_APPEND, 0600) >= 0);
+        assert(open(LOG_FILENAME, O_CREAT | O_WRONLY | O_APPEND, 0600) >= 0);
+
+        close(STDIN_FILENO);
+
         while (1) {
-                int clicked_elem_index;
                 addr_len = sizeof(struct sockaddr_in);
 
                 if (((clientfd = accept(sockfd, (struct sockaddr *) &sock_in, &addr_len)) < 0)) {
-                        perror("Accept");
-                        exit(-1);
+                        LOG("accept: %s\n", strerror(errno));
+                        break;
                 }
 
-                switch (fork()) {
-                case 0:
-                        switch (read(clientfd, inbuf, sizeof inbuf - 1)) {
-                        case 0:
-                        case -1:
-                                fprintf(stderr, "Internal Server Error! Reload the page\n");
-                                continue;
-                        default:
-                                if (sscanf(inbuf, "GET /?button=%d HTTP/1.1\r\n", &clicked_elem_index) == 1) {
-                                        switch (clicked_elem_index) {
-                                        default:
-                                                da_remove(&data, clicked_elem_index);
-                                                break;
-                                        case -1:
-                                                return;
-                                        }
-                                }
-                        }
+                struct serve_data sdata = (struct serve_data) {
+                        .sock_in = sock_in,
+                        .clientfd = clientfd,
+                        .addr_len = addr_len,
+                };
 
-                        inet_ntop(AF_INET, &sock_in.sin_addr, client_ip, addr_len);
-
-                        qsort(data.data, data.size, sizeof *data.data, compare_tasks_by_date);
-
-                        strcatf(buf, "<!DOCTYPE html>");
-                        strcatf(buf, "<html>");
-                        strcatf(buf, "<head>");
-
-                        /* Try to open and load CSS file. If something fails dont report
-                         * and use default formatting. */
-                        fd = open(*css_file, O_RDONLY);
-                        if (fd >= 0) {
-                                strcatf(buf, "<style>");
-                                while ((n = read(fd, css_file_buf, sizeof css_file_buf - 1)) > 0) {
-                                        css_file_buf[n] = 0;
-                                        strcatf(buf, "%s", css_file_buf);
-                                }
-                                close(fd);
-                                strcatf(buf, "</style>");
-                        }
-
-                        strcatf(buf, "</head>");
-                        strcatf(buf, "<body>");
-                        strcatf(buf, "<title>");
-                        strcatf(buf, "Todo");
-                        strcatf(buf, "</title>");
-                        strcatf(buf, "<h1>");
-                        strcatf(buf, "Tasks");
-                        strcatf(buf, "</h1>");
-                        strcatf(buf, "<dl>");
-                        for_da_each(e, data)
-                        {
-                                strcatf(buf, "<dt>");
-                                strcatf(buf, "%s", e->name);
-                                strcatf(buf, "<form action=\"/\" method=\"GET\" style=\"display:inline;\">");
-                                strcatf(buf, "<input type=\"hidden\" name=\"button\" value=\"%d\">", da_index(e, data));
-                                strcatf(buf, "<button type=\"submit\">Done</button>");
-                                strcatf(buf, "</form>");
-                                strcatf(buf, "<dd>");
-                                strcatf(buf, "%s", overload_date(e->due));
-                                strcatf(buf, "</dd>");
-                                if (e->desc) {
-                                        strcatf(buf, "<dd><p>");
-                                        strcatf(buf, "%s\n", e->desc);
-                                        strcatf(buf, "</p></dd>");
-                                }
-                        }
-                        strcatf(buf, "</dl>");
-                        strcatf(buf, "<br>");
-                        strcatf(buf, "<form action=\"/\" method=\"GET\" style=\"display:inline;\">");
-                        strcatf(buf, "<input type=\"hidden\" name=\"button\" value=\"%d\">", -1);
-                        strcatf(buf, "<button type=\"submit\">Save and quit</button>");
-                        strcatf(buf, "</form>");
-                        strcatf(buf, "</body>");
-                        strcatf(buf, "</html>");
-
-                        dprintf(clientfd, "HTTP/1.1 200 OK\r\n");
-                        dprintf(clientfd, "Content-Type: text/html\r\n");
-                        dprintf(clientfd, "Content-Length: %zu\r\n", strlen(buf));
-                        dprintf(clientfd, "\r\n");
-
-                        assert(send(clientfd, buf, strlen(buf), 0) > 0);
-
-                        close(clientfd);
-                        exit(0);
-                }
+                if ((status = pthread_create(&thread_id, NULL, serve_gen_response, &sdata)) != 0) {
+                        LOG("pthread_create: %s\n", strerror(status));
+                        break;
+                } else
+                        pthread_detach(thread_id);
         }
+        /* Really it never reaches this */
         close(sockfd);
+        UNREACHABLE("out of daemon loop");
 }
 
-int
-load_from_file(const char *filename)
-{
-        FILE *f;
-        char buf[128];
-        Task task = { 0 };
-        struct tm tp;
-        char *c;
-
-        f = fopen(filename, "r");
-        if (f == NULL) {
-                fprintf(stderr, "File %s can not be opened! You should create it\n", filename);
-                return 0;
-        }
-
-        while (fgets(buf, sizeof buf - 1, f)) {
-                switch (buf[0]) {
-                        /* NAME */
-                case '[':
-                        add_if_valid(task);
-                        ZERO(&task);
-                        TRUNCAT(buf, ']');
-                        task.name = strdup(buf + 1);
-                        break;
-
-                        /* DESCRIPTION */
-                case ' ':
-                        if (!memcmp(buf + 2, "desc: ", 6)) {
-                                TRUNCAT(buf + 8, '\n');
-                                task.desc = strdup(buf + 8);
-                        }
-
-                        /* DATE TIME */
-                        else if (!memcmp(buf + 2, "date: ", 6)) {
-                                TRUNCAT(buf, '\n');
-                                ZERO(&tp);
-                                if ((c = strptime(buf + 8, DATETIME_FORMAT, &tp)) && *c) {
-                                        fprintf(stderr, "Can not load %s\n", buf + 8);
-                                }
-
-                                tp.tm_isdst = -1; // determine if summer time is in use (+-1h)
-                                task.due = mktime(&tp);
-                        }
-
-                        /* INVALID ARGUMENT */
-                        else
-                                fprintf(stderr, "Unknown token: %s\n", buf);
-                        break;
-
-                case '\n':
-                        break;
-                default:
-                        fprintf(stderr, "Unknown token: %s\n", buf);
-                        break;
-                }
-        }
-
-        add_if_valid(task);
-        fclose(f);
-        return 1;
-}
-
-int
-load_to_file(const char *filename)
-{
-        FILE *f;
-        f = fopen(filename, "w");
-
-        if (f == NULL) {
-                fprintf(stderr, "File %s can not be opened to write!\n", filename);
-                return 0;
-        }
-
-        for_da_each(task, data)
-        {
-                fprintf(f, "[%s]\n", task->name);
-                fprintf(f, "  date: %s\n", overload_date(task->due));
-                if (task->desc)
-                        fprintf(f, "  desc: %s\n", task->desc);
-                fprintf(f, "\n");
-        }
-
-        fclose(f);
-        return data.size;
-}
-
-time_t
+static time_t
 days(unsigned int days)
 {
         time_t t;
@@ -428,7 +488,7 @@ days(unsigned int days)
         return mktime(tp);
 }
 
-time_t
+static time_t
 next_sunday(int *d)
 {
         time_t t;
@@ -443,7 +503,7 @@ next_sunday(int *d)
 }
 
 /* Get a subarray of DATA whose end date is before TP */
-Task_da
+static Task_da
 tasks_before(struct tm tp)
 {
         tp.tm_isdst = -1; // determine if summer time is in use (+-1h)
@@ -458,7 +518,7 @@ tasks_before(struct tm tp)
         return filtered_data;
 }
 
-void
+static void
 destroy_all()
 {
         for_da_each(e, data)
@@ -469,7 +529,7 @@ destroy_all()
         da_destroy(&data);
 }
 
-void
+static void
 usage(FILE *stream)
 {
         fprintf(stream, "Usage: %s [OPTIONS]\n", flag_program_name());
@@ -477,7 +537,7 @@ usage(FILE *stream)
         flag_print_options(stream);
 }
 
-void
+static void
 add_task()
 {
         Task task = { 0 };
@@ -524,7 +584,7 @@ add_task()
                 tp.tm_mon = tp_current.tm_mon;
 
         } else {
-                fprintf(stderr, "Error: can not parse date: %s\n", buf);
+                LOG("Error: can not parse date: %s\n", buf);
                 free(task.name);
                 free(task.desc);
                 return;
@@ -571,11 +631,13 @@ main(int argc, char *argv[])
         bool *clear = flag_bool("clear", false, "Mark all tasks as completed");
         bool *add = flag_bool("add", false, "Add a new task");
         char **in_file = flag_str("in_file", IN_FILENAME, "Input file");
-        char **out_file = flag_str("out_file", IN_FILENAME, "Output file");
+        out_file = flag_str("out_file", IN_FILENAME, "Output file");
         css_file = flag_str("css_file", CSS_FILENAME, "CSS file");
         bool *serve = flag_bool("serve", false, "Start http server daemon");
         bool *die = flag_bool("die", false, "Kill running daemon");
         quiet = flag_bool("quiet", false, "Do not show unneded output");
+
+        srand(time(0));
 
         if (!flag_parse(argc, argv)) {
                 usage(stderr);
@@ -587,13 +649,16 @@ main(int argc, char *argv[])
                 destroy_all();
                 exit(0);
         }
-        srand(time(0));
+
+        /* The if(...) without else show tasks list.
+         * The if(...) with else do not show default list tasks */
 
         if (*help) {
                 usage(stdout);
                 destroy_all();
                 exit(0);
         }
+
         if (*add) {
                 add_task();
         }
@@ -627,7 +692,6 @@ main(int argc, char *argv[])
                 da_destroy(&filter);
         }
 
-
         else if (*week) {
                 time_t t = next_sunday(NULL);
                 Task_da filter = tasks_before(*localtime(&t));
@@ -642,7 +706,6 @@ main(int argc, char *argv[])
         else if (*die) {
                 kill_self();
                 sem_unlink("/todo_pid_file_sem");
-
         }
 
         else {
