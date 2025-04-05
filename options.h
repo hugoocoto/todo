@@ -15,8 +15,6 @@
 #define MAX_CLIENTS 16
 #define BUFSIZE 1024 * 1024 /* IO buffer */
 
-#define WRITE_TO_LOG 1
-
 /* Please note that modifying this macro would break all previously
  * loaded tasks. As tasks are not modificable, changing this variable
  * invalidates all yet created tasks. It can be modified if needed. */

@@ -38,42 +38,16 @@
 #define FLAG_IMPLEMENTATION
 #include "flag.h"
 
-#include "da.h"
+#include "thirdparty/frog/frog.h"
 
 #include "options.h"
 
-#define UNREACHABLE(...)                                                     \
-        do {                                                                 \
-                LOG(__FILE__ ":%d: ", __LINE__);                             \
-                LOG("[Unreachable]" __VA_OPT__(": %s") "\n", ##__VA_ARGS__); \
-                exit(1);                                                     \
-        } while (0)
-
-#define NOIMPLEMENTED(...)                                                          \
-        do {                                                                        \
-                LOG(__FILE__ ":%d: ", __LINE__);                                    \
-                LOG("[No yet implemented]" __VA_OPT__(": %s") "\n", ##__VA_ARGS__); \
-                exit(1);                                                            \
-        } while (0)
-
-#define TODO(what)
-
-#define ZERO(obj_ptr) memset((obj_ptr), 0, sizeof(obj_ptr)[0])
-#define strcatf(strbuf, what, ...) sprintf((strbuf) + strlen(strbuf), what, ##__VA_ARGS__)
 #define TRUNCAT(str, chr)                         \
         do {                                      \
                 char *_c_;                        \
                 if ((_c_ = strchr((str), (chr)))) \
                         *_c_ = 0;                 \
         } while (0)
-
-#if defined(WRITE_TO_LOG) && WRITE_TO_LOG
-#define LOG(format, ...) fprintf(stderr, (format), ##__VA_ARGS__)
-#else
-#define LOG(...) \
-        do {     \
-        } while (0)
-#endif
 
 
 typedef struct {

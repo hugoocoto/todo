@@ -5,6 +5,7 @@
 #define FLAGS "-Wall", "-Wextra"
 #define OUT "todo"
 
+
 int
 main(int argc, char *argv[])
 {
