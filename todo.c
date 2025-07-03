@@ -38,7 +38,7 @@
 #define FLAG_IMPLEMENTATION
 #include "flag.h"
 
-#include "thirdparty/frog/frog.h"
+#include "frog.h"
 
 #include "options.h"
 

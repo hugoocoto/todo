@@ -8,5 +8,5 @@ install: todo
 todo: todo.o
 	gcc $(FLAGS) todo.o -o $(OUT)
 
-todo.o: todo.c flag.h da.h options.h
+todo.o: todo.c flag.h frog.h options.h
 	gcc -c todo.c $(FLAGS)
