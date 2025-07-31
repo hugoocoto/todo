@@ -18,7 +18,7 @@ Currently it is stable enought to be used.
 #### Installation from source
 Please take a look at the default vaules in options.h before build it.
 ```sh
-git clone https://github.com/hugocotoflorez/todo
+git clone https://github.com/hugoocoto/todo
 cd todo
 make
 ```
