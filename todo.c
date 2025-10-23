@@ -126,12 +126,12 @@ load_from_file(const char *filename)
         FILE *f;
         char buf[128];
         Task task = { 0 };
-        struct tm tp;
+        struct tm tp = { 0 };
         char *c;
 
         f = fopen(filename, "r");
         if (f == NULL) {
-                LOG("File %s can not be opened! You should create it\n", filename);
+                fclose(fopen(filename, "w")); // create file
                 return 0;
         }
 
@@ -155,7 +155,6 @@ load_from_file(const char *filename)
                         /* DATE TIME */
                         else if (!memcmp(buf + 2, "date: ", 6)) {
                                 TRUNCAT(buf, '\n');
-                                ZERO(&tp);
                                 if ((c = strptime(buf + 8, DATETIME_FORMAT, &tp)) && *c) {
                                         LOG("Can not load %s\n", buf + 8);
                                 }
@@ -179,7 +178,7 @@ load_from_file(const char *filename)
 
         add_if_valid(task);
         fclose(f);
-        return 1;
+        return 0;
 }
 
 static int
@@ -452,7 +451,7 @@ static time_t
 days(unsigned int days)
 {
         time_t t;
-        struct tm *tp;
+        struct tm *tp = { 0 };
         t = time(NULL) + days * (3600 * 24);
         tp = localtime(&t);
         tp->tm_hour = 23;
@@ -546,16 +545,22 @@ add_task()
         printf("  Date format: ");
         fflush(stdout);
         fgets(buf, sizeof buf - 1, stdin);
-        if (sscanf(buf, "+%d", &n) == 1) {
-                t += n * (3600 * 24);
-                tp = *localtime(&t);
-        } else if (sscanf(buf, "%d/%d/%d", &tp.tm_mday, &tp.tm_mon, &tp.tm_year) == 3) {
+
+        if (sscanf(buf, "%d/%d/%d", &tp.tm_mday, &tp.tm_mon, &tp.tm_year) == 3) {
+                tp.tm_year -= 1900;
+                --tp.tm_mon;
+
         } else if (sscanf(buf, "%d/%d", &tp.tm_mday, &tp.tm_mon) == 2) {
                 tp.tm_year = tp_current.tm_year;
                 --tp.tm_mon;
+
         } else if (sscanf(buf, "%d", &tp.tm_mday) == 1) {
                 tp.tm_year = tp_current.tm_year;
                 tp.tm_mon = tp_current.tm_mon;
+
+        } else if (sscanf(buf, "+%d", &n) == 1) {
+                t += n * (3600 * 24);
+                tp = *localtime(&t);
 
         } else {
                 LOG("Error: can not parse date: %s\n", buf);
@@ -619,10 +624,7 @@ main(int argc, char *argv[])
                 exit(1);
         }
 
-        if (load_from_file(*in_file) == 0) {
-                destroy_all();
-                exit(0);
-        }
+        load_from_file(*in_file);
 
         /* The if(...) without else show tasks list.
          * The if(...) with else do not show default list tasks */
@@ -646,17 +648,17 @@ main(int argc, char *argv[])
                 data.size = 0;
         }
 
-        if (*today) {
-                time_t time = days(0);
-                Task_da filter = tasks_before(*localtime(&time));
-                list_tasks(STDOUT_FILENO, filter, "Tasks for today");
-        }
-
-        else if (*overdue) {
+        if (*overdue) {
                 time_t t = time(NULL);
                 Task_da filter = tasks_before(*localtime(&t));
                 list_tasks(STDOUT_FILENO, filter, "Overdue tasks");
                 da_destroy(&filter);
+        }
+
+        else if (*today) {
+                time_t time = days(0);
+                Task_da filter = tasks_before(*localtime(&time));
+                list_tasks(STDOUT_FILENO, filter, "Tasks for today");
         }
 
         else if (*in >= 0) {

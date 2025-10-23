@@ -2,7 +2,7 @@
 
 #define BACKUP_PATH "/home/hugo/"
 #define TMP_PATH "/tmp/"
-#define CSS_PATH "code/todo/"
+#define CSS_PATH "dotfiles/todo/"
 
 #define IN_FILENAME BACKUP_PATH "todo.out"
 #define OUT_FILENAME BACKUP_PATH "todo.out"
