@@ -546,7 +546,11 @@ add_task()
         fflush(stdout);
         fgets(buf, sizeof buf - 1, stdin);
 
-        if (sscanf(buf, "%d/%d/%d", &tp.tm_mday, &tp.tm_mon, &tp.tm_year) == 3) {
+        if (sscanf(buf, "+%d", &n) == 1) {
+                t += n * (3600 * 24);
+                tp = *localtime(&t);
+
+        } else if (sscanf(buf, "%d/%d/%d", &tp.tm_mday, &tp.tm_mon, &tp.tm_year) == 3) {
                 tp.tm_year -= 1900;
                 --tp.tm_mon;
 
@@ -557,10 +561,6 @@ add_task()
         } else if (sscanf(buf, "%d", &tp.tm_mday) == 1) {
                 tp.tm_year = tp_current.tm_year;
                 tp.tm_mon = tp_current.tm_mon;
-
-        } else if (sscanf(buf, "+%d", &n) == 1) {
-                t += n * (3600 * 24);
-                tp = *localtime(&t);
 
         } else {
                 LOG("Error: can not parse date: %s\n", buf);

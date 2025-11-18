@@ -10,7 +10,7 @@ install: todo ~/.local/bin/todo
 uninstall:
 	rm ~/.local/bin/todo
 
-~/.local/bin/todo:
+~/.local/bin/todo: todo
 	mkdir -p ~/.local/bin
 	cp todo ~/.local/bin/
 
