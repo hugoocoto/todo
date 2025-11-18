@@ -76,6 +76,8 @@ const char *no_tasks_messages[] = {
         "You're ahead of schedule! Keep up the great work."
 };
 
+/* I can override this and use it to print so I can avoid printing the year if
+ * its the same as the actual and avoid printing the time if its the default */
 static char *
 overload_date(time_t time)
 {
