@@ -11,6 +11,8 @@ todo [OPTIONS]
 ## Description
 run todo -help. If you need more documentation, read the source code.
 
+![]("images/2026-04-29_09:50:08.png")
+
 ## Version Status
 Currently it is stable enought to be used.
 
