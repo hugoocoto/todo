@@ -11,7 +11,7 @@ todo [OPTIONS]
 ## Description
 run todo -help. If you need more documentation, read the source code.
 
-![](images/2026-04-29_09:50:08.png)
+![Example image](images/2026-04-29_09:50:08.png)
 
 ## Version Status
 Currently it is stable enought to be used.
@@ -22,8 +22,9 @@ Please take a look at the default vaules in options.h before build it.
 ```sh
 git clone https://github.com/hugoocoto/todo
 cd todo
-make
+make install
 ```
+
 The makefile compliles the sources and copies the executable to
 `~/.local/bin/`. Make sure it is in the PATH to be able to use
 `todo` without full route.
@@ -38,7 +39,7 @@ make: *** [makefile:6: install] Error 1`: Just kill daemon and run make again:
 Running `todo -serve` creates a daemon that serve a http client
 in the address returned by the command.
 
-![Example Image](./serve1.png)
+![Example Image](images/serve1.png)
 
 You can deploy it automatically using `xdg-open $(todo -serve)` or
 using the desired browser.

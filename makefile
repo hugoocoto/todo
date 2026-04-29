@@ -5,7 +5,7 @@ CC = gcc
 todo: todo.o
 	gcc $(FLAGS) todo.o -o $(OUT)
 
-install: todo ~/.local/bin/todo
+install: ~/.local/bin/todo
 
 uninstall:
 	rm ~/.local/bin/todo
